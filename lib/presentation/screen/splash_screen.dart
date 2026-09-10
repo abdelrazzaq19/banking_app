@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:newtronic_banking/core/theme/app_colors.dart';
 import 'package:newtronic_banking/presentation/screen/auth/authentication_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -10,13 +13,14 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  void navigateToOtherScreen() => Future.delayed(
-        const Duration(seconds: 3),
-        () => Navigator.pushReplacementNamed(
-          context,
-          AuthenticationScreen.routeName,
-        ),
-      );
+  Timer? _navigationTimer;
+
+  void navigateToOtherScreen() {
+    _navigationTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AuthenticationScreen.routeName);
+    });
+  }
 
   @override
   void initState() {
@@ -25,8 +29,15 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   @override
+  void dispose() {
+    _navigationTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: context.scheme.surface,
       body: Center(
         child: Image.asset(
           'lib/assets/images/logo.png',

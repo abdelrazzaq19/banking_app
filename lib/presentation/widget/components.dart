@@ -1,42 +1,54 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lottie/lottie.dart';
-import 'package:newtronic_banking/styles/pallet.dart';
+import 'package:newtronic_banking/core/theme/app_colors.dart';
+import 'package:newtronic_banking/core/theme/motion.dart';
+import 'package:newtronic_banking/core/theme/tokens.dart';
 import 'package:newtronic_banking/styles/typography.dart';
 
 SizedBox customSpaceHorizontal(double width) => SizedBox(width: width);
 
 SizedBox customSpaceVertical(double height) => SizedBox(height: height);
 
-Text customText({required String textValue, textStyle, textAlign}) {
+Text customText({
+  required String textValue,
+  TextStyle? textStyle,
+  TextAlign? textAlign,
+  int? maxLines,
+  TextOverflow? overflow,
+}) {
   return Text(
     textValue,
     style: textStyle ?? headline1,
     textAlign: textAlign ?? TextAlign.start,
+    maxLines: maxLines,
+    overflow: overflow,
   );
 }
 
 InkWell customButton({
-  required buttonOnTap,
+  required VoidCallback? buttonOnTap,
   required String buttonText,
-  buttonBorderRadius,
-  buttonFirstGradientColor,
-  buttonSecondGradientColor,
-  buttonPadding,
-  textStyles,
-  textColor,
-  buttonWidth,
-  buttonLeftIcon,
-  buttonRightIcon,
-  isButtonIcon = false,
+  required Color buttonFirstGradientColor,
+  required Color buttonSecondGradientColor,
+  BorderRadius? buttonBorderRadius,
+  EdgeInsetsGeometry? buttonPadding,
+  TextStyle? textStyles,
+  Color? textColor,
+  double? buttonWidth,
+  Widget? buttonLeftIcon,
+  Widget? buttonRightIcon,
+  bool isButtonIcon = false,
 }) {
+  final borderRadius = buttonBorderRadius ?? Radii.pillAll;
   return InkWell(
     onTap: buttonOnTap,
+    borderRadius: borderRadius,
     child: Container(
       width: buttonWidth ?? double.infinity,
+      constraints: const BoxConstraints(minHeight: 48),
       decoration: BoxDecoration(
-        borderRadius: buttonBorderRadius ?? BorderRadius.circular(40),
+        borderRadius: borderRadius,
         gradient: LinearGradient(
           colors: [buttonFirstGradientColor, buttonSecondGradientColor],
           begin: Alignment.centerLeft,
@@ -44,96 +56,111 @@ InkWell customButton({
         ),
       ),
       padding: buttonPadding ??
-          const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          const EdgeInsets.symmetric(
+            horizontal: Insets.xl,
+            vertical: Insets.sm,
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: isButtonIcon == true
+        mainAxisAlignment: isButtonIcon
             ? MainAxisAlignment.spaceEvenly
             : MainAxisAlignment.center,
         children: [
-          Visibility(
-            visible: buttonLeftIcon != null,
-            child: buttonLeftIcon ?? const SizedBox.shrink(),
-          ),
+          ?buttonLeftIcon,
           customText(
             textValue: buttonText,
             textStyle: textStyles ??
-                headline4.copyWith(color: textColor ?? secondary0),
+                headline4.copyWith(color: textColor ?? Colors.white),
           ),
-          Visibility(
-            visible: buttonRightIcon != null,
-            child: buttonRightIcon ?? const SizedBox.shrink(),
-          ),
+          ?buttonRightIcon,
         ],
       ),
     ),
   );
 }
 
-TextField customTextField({
+/// A text field styled from the active theme.
+///
+/// [context] is required because the colours come from the theme rather than a
+/// fixed palette, which is what lets the field render correctly in dark mode.
+TextField customTextField(
+  BuildContext context, {
   required TextEditingController controller,
   required String hintText,
   required String errorText,
   List<TextInputFormatter>? inputFormatters,
-  void Function(String)? onChanged,
-  void onTapTextField,
+  ValueChanged<String>? onChanged,
+  VoidCallback? onTap,
   bool obscureText = false,
   TextInputType keyboardType = TextInputType.text,
-  prefixIcon,
-  suffixIcon,
-  isFilled = false,
+  IconData? prefixIcon,
+  Widget? suffixIcon,
+  bool isFilled = false,
 }) {
+  final scheme = context.scheme;
+  final colors = context.colors;
+
   return TextField(
     controller: controller,
     obscureText: obscureText,
     keyboardType: keyboardType,
     onChanged: onChanged,
-    onTap: () => onTapTextField,
+    onTap: onTap,
     inputFormatters: inputFormatters,
+    style: bodyText2.copyWith(color: scheme.onSurface),
+    cursorColor: scheme.primary,
     decoration: InputDecoration(
       errorText: errorText.isEmpty ? null : errorText,
       filled: isFilled,
-      fillColor: secondary10.withOpacity(.5),
+      fillColor: colors.mutedFill,
       hintText: hintText,
-      hintStyle: bodyText2.copyWith(color: text),
+      hintStyle: bodyText2.copyWith(color: colors.subtleText),
       prefixIcon: Icon(
         prefixIcon ?? Icons.person_rounded,
-        color: secondary20,
+        color: colors.subtleText,
       ),
       suffixIcon: suffixIcon,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(40),
-        borderSide: const BorderSide(color: secondary20),
+        borderRadius: Radii.pillAll,
+        borderSide: BorderSide(color: colors.mutedBorder),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(40),
-        borderSide: const BorderSide(color: secondary20),
+        borderRadius: Radii.pillAll,
+        borderSide: BorderSide(color: colors.mutedBorder),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(40),
-        borderSide: const BorderSide(color: primary90),
+        borderRadius: Radii.pillAll,
+        borderSide: BorderSide(color: scheme.primary, width: 2),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(40),
-        borderSide: const BorderSide(color: Colors.red),
+        borderRadius: Radii.pillAll,
+        borderSide: BorderSide(color: scheme.error),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: Radii.pillAll,
+        borderSide: BorderSide(color: scheme.error, width: 2),
       ),
       contentPadding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 8,
+        horizontal: Insets.md,
+        vertical: Insets.xs,
       ),
     ),
   );
 }
 
-Future<dynamic> customDialog(BuildContext context,
-    {required animationIcon, required textDialog}) {
-  return showDialog(
+Future<void> customDialog(
+  BuildContext context, {
+  required String animationIcon,
+  required String textDialog,
+}) {
+  return showDialog<void>(
     barrierDismissible: false,
     context: context,
     builder: (context) => Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        padding: const EdgeInsets.all(40),
+      backgroundColor: context.scheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: Radii.mdAll),
+      child: Padding(
+        padding: const EdgeInsets.all(Insets.xxl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -143,10 +170,10 @@ Future<dynamic> customDialog(BuildContext context,
               width: 140,
               fit: BoxFit.cover,
             ),
-            customSpaceVertical(8),
+            customSpaceVertical(Insets.xs),
             customText(
               textValue: textDialog,
-              textStyle: headline4.copyWith(color: text),
+              textStyle: headline4.copyWith(color: context.scheme.onSurface),
               textAlign: TextAlign.center,
             ),
           ],
@@ -164,14 +191,25 @@ void showLoadingDialog(BuildContext context) {
   );
 }
 
-void showSuccessDialog(BuildContext context,
-    {required String message, required onAction}) {
+/// Shows the success animation, then runs [onAction] once it has been seen.
+///
+/// The dialog is dismissed before [onAction] runs, so the caller never navigates
+/// on top of a dialog route that is still on the stack.
+void showSuccessDialog(
+  BuildContext context, {
+  required String message,
+  required VoidCallback onAction,
+}) {
   customDialog(
     context,
     animationIcon: 'lib/assets/lotties/lottieSuccess.json',
     textDialog: message,
   );
-  Future.delayed(const Duration(seconds: 2), () => onAction());
+  Future.delayed(const Duration(seconds: 2), () {
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    onAction();
+  });
 }
 
 void showErrorDialog(BuildContext context, {required String message}) {
@@ -180,165 +218,117 @@ void showErrorDialog(BuildContext context, {required String message}) {
     animationIcon: 'lib/assets/lotties/lottieFailed.json',
     textDialog: message,
   );
-  Future.delayed(const Duration(seconds: 2), () => Navigator.pop(context));
+  Future.delayed(const Duration(seconds: 2), () {
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+  });
 }
 
-Future<dynamic> customDialogWithButton(
-  context, {
-  required dialogTextValue,
-  required dialogAction,
+Future<void> customDialogWithButton(
+  BuildContext context, {
+  required String dialogTextValue,
+  required VoidCallback dialogAction,
 }) {
-  return showDialog(
+  return showDialog<void>(
     barrierDismissible: false,
     context: context,
-    builder: (context) => Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.65,
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            LottieBuilder.asset(
-              'lib/assets/lotties/lottieAsk.json',
-              height: 80,
-              width: 80,
-              fit: BoxFit.cover,
-            ),
-            customSpaceVertical(16),
-            customText(
-              textValue: dialogTextValue,
-              textStyle: headline4.copyWith(color: text),
-              textAlign: TextAlign.center,
-            ),
-            customSpaceVertical(16),
-            Column(
-              children: List.generate(
-                2,
-                (buttonIndex) => Container(
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                  child: customButton(
-                    buttonOnTap: () {
-                      if (buttonIndex == 0) {
-                        dialogAction();
-                      } else {
-                        Navigator.pop(context);
-                      }
-                    },
-                    buttonBorderRadius: BorderRadius.circular(8),
-                    buttonText: buttonIndex == 0 ? 'Yes' : 'No',
-                    buttonFirstGradientColor:
-                        buttonIndex == 0 ? primary80 : secondary20,
-                    buttonSecondGradientColor:
-                        buttonIndex == 0 ? primary90 : secondary20,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-Future<dynamic> customDraggableModalBottomSheet(
-  BuildContext context, {
-  required bottomSheetTitle,
-  required bottomSheetSearchController,
-  required bottomSheetItemCount,
-  required bottomSheetOnTap,
-  required bottomSheetImage,
-  required bottomSheetItemName,
-}) {
-  return showModalBottomSheet(
-    context: context,
-    barrierColor: text.withOpacity(.5),
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.only(
-        topLeft: Radius.circular(16),
-        topRight: Radius.circular(16),
-      ),
-    ),
-    isDismissible: true,
-    builder: (context) => Container(
-      width: MediaQuery.of(context).size.width,
-      decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16), color: secondary0),
-      child: IntrinsicHeight(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+    builder: (dialogContext) {
+      final scheme = dialogContext.scheme;
+      final colors = dialogContext.colors;
+      return Dialog(
+        backgroundColor: scheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: Radii.mdAll),
+        child: Container(
+          width: MediaQuery.of(dialogContext).size.width * 0.65,
+          padding: const EdgeInsets.all(Insets.xl),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Align(
-                alignment: Alignment.center,
-                child: Container(
-                  width: 80,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4),
-                    color: text.withOpacity(.25),
-                  ),
-                ),
+              LottieBuilder.asset(
+                'lib/assets/lotties/lottieAsk.json',
+                height: 80,
+                width: 80,
+                fit: BoxFit.cover,
               ),
-              customSpaceVertical(16),
+              customSpaceVertical(Insets.md),
               customText(
-                textValue: bottomSheetTitle,
-                textStyle: headline5,
+                textValue: dialogTextValue,
+                textStyle: headline4.copyWith(color: scheme.onSurface),
+                textAlign: TextAlign.center,
               ),
-              customSpaceVertical(16),
-              customTextField(
-                controller: bottomSheetSearchController,
-                hintText: 'Search',
-                errorText: '',
-                prefixIcon: Icons.search_rounded,
-                isFilled: true,
-              ),
-              customSpaceVertical(16),
-              Expanded(
-                child: SizedBox(
-                  height: MediaQuery.of(context).size.height / 2,
-                  child: ListView.separated(
-                    scrollDirection: Axis.vertical,
-                    separatorBuilder: (context, index) =>
-                        customSpaceVertical(16),
-                    itemCount: bottomSheetItemCount,
-                    itemBuilder: (context, index) => InkWell(
-                      onTap: () {
-                        bottomSheetOnTap();
-                        Navigator.pop(context);
-                      },
-                      child: ListTile(
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(40),
-                          child: CachedNetworkImage(
-                            width: 44,
-                            height: 44,
-                            fit: BoxFit.cover,
-                            imageUrl: bottomSheetImage,
-                            placeholder: (context, url) => Image.asset(
-                              'lib/assets/images/profile.jpg',
-                              fit: BoxFit.cover,
-                            ),
-                            errorWidget: (context, url, error) =>
-                                const Icon(Icons.error),
-                          ),
-                        ),
-                        title: customText(
-                          textValue: bottomSheetItemName,
-                          textStyle: headline5,
-                        ),
+              customSpaceVertical(Insets.md),
+              Column(
+                children: List.generate(
+                  2,
+                  (buttonIndex) {
+                    final isConfirm = buttonIndex == 0;
+                    return Container(
+                      margin: const EdgeInsets.symmetric(
+                        vertical: Insets.xxs,
                       ),
-                    ),
-                  ),
+                      child: customButton(
+                        buttonOnTap: () {
+                          if (isConfirm) {
+                            dialogAction();
+                          } else {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                        buttonBorderRadius: Radii.xsAll,
+                        buttonText: isConfirm ? 'Yes' : 'No',
+                        buttonFirstGradientColor:
+                            isConfirm ? scheme.primary : colors.mutedFill,
+                        buttonSecondGradientColor:
+                            isConfirm ? colors.accent : colors.mutedFill,
+                        textColor: isConfirm
+                            ? scheme.onPrimary
+                            : scheme.onSurface,
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
           ),
         ),
-      ),
-    ),
+      );
+    },
   );
+}
+
+/// Fades and lifts [child] into place, offset by its position in a list.
+///
+/// Used for the staggered reveals on the home and transaction screens.
+class Reveal extends StatelessWidget {
+  const Reveal({
+    super.key,
+    required this.child,
+    this.index = 0,
+    this.offset = 16,
+  });
+
+  final Widget child;
+
+  /// Position in the group; each step delays the animation by [Motion.stagger].
+  final int index;
+
+  /// How far the child travels upward as it fades in.
+  final double offset;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: Motion.medium + Motion.stagger * index,
+      curve: Motion.enter,
+      builder: (context, value, child) => Opacity(
+        opacity: value.clamp(0, 1),
+        child: Transform.translate(
+          offset: Offset(0, (1 - value) * offset),
+          child: child,
+        ),
+      ),
+      child: child,
+    );
+  }
 }

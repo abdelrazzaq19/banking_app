@@ -1,17 +1,20 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/date_symbol_data_local.dart';
-import 'package:intl/intl.dart';
 import 'package:lottie/lottie.dart';
 import 'package:newtronic_banking/common/constants.dart';
 import 'package:newtronic_banking/data/model/transaction_model.dart';
 import 'package:newtronic_banking/data/model/user_model.dart';
 import 'package:newtronic_banking/data/repository/repository.dart';
+import 'package:newtronic_banking/data/utils/formatted.dart';
 import 'package:newtronic_banking/data/utils/greetings.dart';
 import 'package:newtronic_banking/presentation/screen/transactions/transaction_screen.dart';
+import 'package:newtronic_banking/core/theme/app_colors.dart';
+import 'package:newtronic_banking/core/theme/tokens.dart';
 import 'package:newtronic_banking/presentation/widget/components.dart';
 import 'package:newtronic_banking/presentation/widget/shimmer.dart';
-import 'package:newtronic_banking/styles/pallet.dart';
+import 'package:newtronic_banking/presentation/widget/theme_toggle_button.dart';
 import 'package:newtronic_banking/styles/typography.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -24,10 +27,15 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  /// Height of the balance card carousel. Fixed rather than a fraction of the
+  /// screen so the card contents cannot overflow on a short device.
+  static const double _cardCarouselHeight = 248;
+
   final List<Map<String, String>> transactions = [];
 
   late TabController tabController;
   late TabController contentController;
+  Timer? _shimmerTimer;
   bool isShimmer = true;
 
   void initTabController() {
@@ -42,32 +50,34 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  void getTransaction() async {
-    await initializeDateFormatting();
-    final data = await Repository().getUsers();
-    transactions.add({
-      'name': 'Transaction',
-      'image': '',
+  Future<void> getTransaction() async {
+    final users = await Repository().getUsers();
+    if (!mounted) return;
+    setState(() {
+      transactions
+        ..clear()
+        ..add({'name': 'Transaction', 'image': ''})
+        ..addAll(users.map((user) => {
+              'name': user.name,
+              'image': user.image,
+            }));
     });
-    for (var i = 0; i < data.length; i++) {
-      setState(() => transactions.add({
-            'name': data[i].name,
-            'image': data[i].image,
-          }));
-    }
   }
 
   @override
   void initState() {
-    Future.delayed(
-        const Duration(seconds: 2), () => setState(() => isShimmer = false));
+    super.initState();
+    _shimmerTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() => isShimmer = false);
+    });
     initTabController();
     getTransaction();
-    super.initState();
   }
 
   @override
   void dispose() {
+    _shimmerTimer?.cancel();
     tabController.dispose();
     contentController.dispose();
     super.dispose();
@@ -75,25 +85,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async => false,
+    return PopScope(
+      canPop: false,
       child: Scaffold(
-        backgroundColor: primary80,
+        backgroundColor: context.colors.headerBackground,
         body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.only(top: 16),
-            child: Column(
-              children: [
-                _buildTabBar(),
-                Container(
-                  width: MediaQuery.of(context).size.width,
-                  height: MediaQuery.of(context).size.height * .95,
-                  decoration: const BoxDecoration(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(16),
-                      topRight: Radius.circular(16),
-                    ),
-                    color: secondary0,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: _buildTabBar(),
+              ),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: Radii.sheetTop,
+                    color: context.colors.sheetBackground,
                   ),
                   padding: const EdgeInsets.only(top: 24),
                   child: TabBarView(
@@ -102,87 +110,93 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     children: List.generate(
                       homeScreenTabbar.length,
                       (index) {
-                        switch (index) {
-                          case 1:
-                            return FutureBuilder(
-                              future: Repository().getUserById(id: widget.id),
-                              builder: (context, snapshot) {
-                                if (snapshot.hasData) {
-                                  return isShimmer
-                                      ? _buildShimmer()
-                                      : Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            _buildHeader(snapshot),
-                                            _buildContentTabBar(),
-                                            _buildContentTabBarView(context),
-                                            _customTitle(
-                                                title: 'Favorite Transactions'),
-                                            _customContentTransaction(),
-                                            _customTitle(
-                                                title: 'Recent Activities'),
-                                            customRecentActivities(),
-                                          ],
-                                        );
-                                } else {
-                                  return _buildShimmer();
-                                }
-                              },
-                            );
-                          default:
-                            return Center(
-                              child: LottieBuilder.asset(
-                                'lib/assets/lotties/lottieComingSoon.json',
-                                width: MediaQuery.of(context).size.width * .5,
-                                height: MediaQuery.of(context).size.height * .5,
+                        if (index != 1) return _buildComingSoon(context);
+                        return FutureBuilder<Users?>(
+                          future: Repository().getUserById(id: widget.id),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData || isShimmer) {
+                              return _buildShimmer();
+                            }
+                            return SingleChildScrollView(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildHeader(snapshot.data!),
+                                  _buildContentTabBar(),
+                                  _buildContentTabBarView(context),
+                                  _customTitle(title: 'Favorite Transactions'),
+                                  _customContentTransaction(),
+                                  _customTitle(title: 'Recent Activities'),
+                                  customRecentActivities(),
+                                  customSpaceVertical(24),
+                                ],
                               ),
                             );
-                        }
+                          },
+                        );
                       },
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Column _buildShimmer() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        shimmerHeader(),
-        shimmerCard(),
-        _customTitle(title: 'Favorite Transactions'),
-        shimmerClip(),
-        _customTitle(title: 'Recent Activities'),
-        shimmerTile(),
-      ],
+  Center _buildComingSoon(BuildContext context) {
+    return Center(
+      child: LottieBuilder.asset(
+        'lib/assets/lotties/lottieComingSoon.json',
+        width: MediaQuery.of(context).size.width * .5,
+        height: MediaQuery.of(context).size.height * .5,
+      ),
+    );
+  }
+
+  Widget _buildShimmer() {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          shimmerHeader(context),
+          shimmerCard(context),
+          _customTitle(title: 'Favorite Transactions'),
+          shimmerClip(context),
+          _customTitle(title: 'Recent Activities'),
+          shimmerTile(context),
+        ],
+      ),
     );
   }
 
   FutureBuilder<List<Transactions>> customRecentActivities() {
-    return FutureBuilder(
+    return FutureBuilder<List<Transactions>>(
       future: Repository().getTransactions(),
       builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          return ListView.separated(
-            scrollDirection: Axis.vertical,
-            separatorBuilder: (context, index) => customSpaceVertical(8),
-            shrinkWrap: true,
-            itemCount: snapshot.data!.length > 3 ? 3 : snapshot.data!.length,
-            itemBuilder: (context, listIndex) {
-              final data = snapshot.data![listIndex];
-              return Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  color: primary80,
-                ),
-                margin: const EdgeInsets.symmetric(horizontal: 20),
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final data = snapshot.data!;
+        final itemCount = data.length > 3 ? 3 : data.length;
+        return ListView.separated(
+          physics: const NeverScrollableScrollPhysics(),
+          scrollDirection: Axis.vertical,
+          separatorBuilder: (context, index) => customSpaceVertical(8),
+          shrinkWrap: true,
+          itemCount: itemCount,
+          itemBuilder: (context, listIndex) {
+            final activity = data[listIndex];
+            // Material, not a coloured Container: a DecoratedBox between a
+            // ListTile and its nearest Material hides the tile's ink splashes,
+            // and the framework asserts on that arrangement.
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              child: Material(
+                color: context.colors.cardGradient[1],
+                borderRadius: Radii.mdAll,
                 child: ListTile(
                   leading: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
@@ -190,246 +204,245 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       width: 44,
                       height: 44,
                       fit: BoxFit.cover,
-                      imageUrl: data.image.toString(),
+                      imageUrl: activity.image,
                       placeholder: (context, url) =>
-                          customText(textValue: data.name.split('')[0]),
+                          customText(textValue: _initialOf(activity.name)),
                       errorWidget: (context, url, error) =>
                           const Icon(Icons.error),
                     ),
                   ),
                   title: customText(
-                    textValue: data.name,
-                    textStyle: subHeadline4.copyWith(
-                      color: secondary0,
-                    ),
+                    textValue: activity.name,
+                    textStyle: subHeadline4.copyWith(color: context.colors.onCard),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: customText(
-                    textValue:
-                        DateFormat('dd MMMM yyyy', 'id_ID').format(data.date),
+                    textValue: formattedTransactionDate(activity.date),
                     textStyle: bodyText2.copyWith(
-                      color: secondary0,
+                      color: context.colors.onCard,
                     ),
                   ),
                   trailing: customText(
-                    textValue: '- Rp ${data.priceIdr}',
-                    textStyle: bodyText2.copyWith(
-                      color: secondary0,
+                    textValue: '- Rp ${activity.priceIdr}',
+                    textStyle: numeric(bodyText2).copyWith(
+                      color: context.colors.onCard,
                     ),
                   ),
                 ),
-              );
-            },
-          );
-        } else {
-          return const Center(child: CircularProgressIndicator());
-        }
+              ),
+            );
+          },
+        );
       },
     );
   }
+
+  /// First character of [name], or a placeholder when the name is empty.
+  ///
+  /// `name.split('')[0]` used to throw a `RangeError` on an empty name.
+  String _initialOf(String name) => name.isEmpty ? '?' : name[0];
 
   SizedBox _customContentTransaction() {
     return SizedBox(
       height: 44,
       child: ListView.separated(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          scrollDirection: Axis.horizontal,
-          separatorBuilder: (context, index) => customSpaceHorizontal(8),
-          itemCount: transactions.length,
-          itemBuilder: (context, transactionIndex) {
-            final data = transactions[transactionIndex];
-            return InkWell(
-              onTap: () {
-                if (transactionIndex == 0) {
-                  Navigator.pushNamed(context, TransactionScreen.routeName);
-                }
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: secondary20),
-                  borderRadius: BorderRadius.circular(40),
-                  color: transactionIndex == 0 ? primary90 : secondary0,
-                ),
-                padding: const EdgeInsets.only(right: 16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Visibility(
-                      visible: data['name'] == 'Transaction' ? true : false,
-                      child: const Padding(
-                        padding: EdgeInsets.only(left: 16),
-                        child: Icon(Icons.add, color: secondary0),
-                      ),
-                    ),
-                    Visibility(
-                      visible: data['name'] == 'Transaction' ? false : true,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(40),
-                        child: CachedNetworkImage(
-                          width: 44,
-                          height: 44,
-                          fit: BoxFit.cover,
-                          imageUrl: data['image'].toString(),
-                          placeholder: (context, url) => Image.asset(
-                            'lib/assets/images/profile.jpg',
-                            fit: BoxFit.cover,
-                          ),
-                          errorWidget: (context, url, error) =>
-                              const Icon(Icons.error),
-                        ),
-                      ),
-                    ),
-                    customSpaceHorizontal(8),
-                    customText(
-                      textValue: data['name'].toString(),
-                      textStyle: bodyText2.copyWith(
-                        color: transactionIndex == 0 ? secondary0 : text,
-                      ),
-                    ),
-                  ],
-                ),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        scrollDirection: Axis.horizontal,
+        separatorBuilder: (context, index) => customSpaceHorizontal(8),
+        itemCount: transactions.length,
+        itemBuilder: (context, transactionIndex) {
+          final data = transactions[transactionIndex];
+          final isNewTransaction = transactionIndex == 0;
+          return InkWell(
+            onTap: () {
+              if (isNewTransaction) {
+                Navigator.pushNamed(
+                  context,
+                  TransactionScreen.routeName,
+                  arguments: widget.id,
+                );
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: context.colors.mutedBorder),
+                borderRadius: Radii.pillAll,
+                color: isNewTransaction
+                    ? context.scheme.primary
+                    : context.colors.sheetBackground,
               ),
-            );
-          }),
+              padding: const EdgeInsets.only(right: 16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  if (isNewTransaction)
+                    const Padding(
+                      padding: EdgeInsets.only(left: Insets.md),
+                      child: Icon(Icons.add),
+                    )
+                  else
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(40),
+                      child: CachedNetworkImage(
+                        width: 44,
+                        height: 44,
+                        fit: BoxFit.cover,
+                        imageUrl: data['image'] ?? '',
+                        placeholder: (context, url) => Image.asset(
+                          'lib/assets/images/profile.jpg',
+                          fit: BoxFit.cover,
+                        ),
+                        errorWidget: (context, url, error) =>
+                            const Icon(Icons.error),
+                      ),
+                    ),
+                  customSpaceHorizontal(8),
+                  customText(
+                    textValue: data['name'] ?? '',
+                    textStyle: bodyText2.copyWith(
+                      color: isNewTransaction
+                          ? context.scheme.onPrimary
+                          : context.scheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
   Padding _customTitle({required String title}) {
     return Padding(
       padding: const EdgeInsets.only(left: 20, top: 24, bottom: 8),
-      child: customText(
-        textValue: title,
-        textStyle: subHeadline3,
-      ),
+      child: customText(textValue: title, textStyle: subHeadline3),
     );
   }
 
   SizedBox _buildContentTabBarView(BuildContext context) {
     return SizedBox(
-      width: MediaQuery.of(context).size.width,
-      height: MediaQuery.of(context).size.height * .3,
+      width: double.infinity,
+      height: _cardCarouselHeight,
       child: TabBarView(
         controller: contentController,
         children: List.generate(
           contentController.length,
-          (index) => FutureBuilder(
+          (tabIndex) => FutureBuilder(
             future: Repository().getBalances(),
             builder: (context, snapshot) {
-              if (snapshot.hasData) {
-                return ListView.separated(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 4,
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return ListView.separated(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 4,
+                ),
+                separatorBuilder: (context, index) => customSpaceHorizontal(10),
+                scrollDirection: Axis.horizontal,
+                itemCount: snapshot.data!.length,
+                itemBuilder: (context, cardIndex) {
+                  final data = snapshot.data![cardIndex];
+                  final cardWidth =
+                      (MediaQuery.of(context).size.width * .6).clamp(240.0, 360.0);
+                  return Container(
+                    width: cardWidth,
+                    decoration: BoxDecoration(
+                      borderRadius: Radii.mdAll,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: context.colors.cardGradient,
+                      ),
                     ),
-                    separatorBuilder: (context, index) =>
-                        customSpaceHorizontal(10),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: snapshot.data!.length,
-                    itemBuilder: (context, cardIndex) {
-                      final data = snapshot.data![cardIndex];
-                      return Container(
-                        width: MediaQuery.of(context).size.width * .6,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              primary100,
-                              primary90,
-                              primary80,
-                            ],
-                          ),
-                        ),
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          mainAxisAlignment: MainAxisAlignment.start,
                           children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.start,
-                              children: [
-                                customText(
-                                  textValue: contentController.index == 0
-                                      ? '${data.cardName} Account'
-                                      : '${data.cardName} Card',
-                                  textStyle: headline4.copyWith(
-                                    color: secondary0,
-                                  ),
-                                ),
-                                customSpaceVertical(4),
-                                customText(
-                                  textValue: data.cardNumber,
-                                  textStyle: subHeadline5.copyWith(
-                                    color: secondary0,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.start,
-                              children: [
-                                customText(
-                                  textValue: 'Balance',
-                                  textStyle: bodyText1.copyWith(
-                                    color: secondary0,
-                                  ),
-                                ),
-                                customSpaceVertical(8),
-                                customText(
-                                  textValue: 'Rp ${data.balance}',
-                                  textStyle: headline4.copyWith(
-                                    color: secondary0,
-                                  ),
-                                ),
-                                customSpaceVertical(8),
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: List.generate(
-                                    2,
-                                    (index) => customButton(
-                                      buttonWidth:
-                                          MediaQuery.of(context).size.width *
-                                              .25,
-                                      buttonOnTap: () {},
-                                      buttonText: index == 0 ? 'MOVE' : 'QRIS',
-                                      buttonFirstGradientColor: secondary0,
-                                      buttonSecondGradientColor: secondary0,
-                                      buttonPadding: const EdgeInsets.all(8),
-                                      buttonBorderRadius:
-                                          BorderRadius.circular(8),
-                                      buttonLeftIcon: index == 0
-                                          ? const Icon(
-                                              Icons.wallet_rounded,
-                                              color: primary90,
-                                            )
-                                          : const Icon(Icons.qr_code_rounded,
-                                              color: primary90),
-                                      isButtonIcon: true,
-                                      textStyles: subHeadline5.copyWith(
-                                        color: primary80,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              ],
-                            ),
                             customText(
-                              textValue: 'Exp ${data.expiryDate}',
-                              textStyle: bodyText2.copyWith(
-                                color: secondary0,
+                              textValue: tabIndex == 0
+                                  ? '${data.cardName} Account'
+                                  : '${data.cardName} Card',
+                              textStyle: headline4.copyWith(
+                                color: context.colors.onCard,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            customSpaceVertical(4),
+                            customText(
+                              textValue: data.cardNumber,
+                              textStyle:
+                                  subHeadline5.copyWith(color: context.colors.onCard),
                             ),
                           ],
                         ),
-                      );
-                    });
-              } else {
-                return const Center(child: CircularProgressIndicator());
-              }
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          children: [
+                            customText(
+                              textValue: 'Balance',
+                              textStyle: bodyText1.copyWith(color: context.colors.onCard),
+                            ),
+                            customSpaceVertical(8),
+                            customText(
+                              textValue: 'Rp ${data.balance.trim()}',
+                              textStyle: headline4.copyWith(color: context.colors.onCard),
+                            ),
+                            customSpaceVertical(8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: List.generate(
+                                2,
+                                (index) => customButton(
+                                  buttonWidth: cardWidth * .42,
+                                  buttonOnTap: () {},
+                                  buttonText: index == 0 ? 'MOVE' : 'QRIS',
+                                  buttonFirstGradientColor:
+                                      context.colors.onCard,
+                                  buttonSecondGradientColor:
+                                      context.colors.onCard,
+                                  buttonPadding: const EdgeInsets.all(8),
+                                  buttonBorderRadius: BorderRadius.circular(8),
+                                  buttonLeftIcon: Icon(
+                                    index == 0
+                                        ? Icons.wallet_rounded
+                                        : Icons.qr_code_rounded,
+                                    // The card action sits on `onCard` (white)
+                                    // in both themes, so it takes the darkest
+                                    // gradient tone rather than `primary`,
+                                    // which in dark mode is a light blue that
+                                    // would leave ~1.9:1 against white.
+                                    color: context.colors.cardGradient.first,
+                                  ),
+                                  isButtonIcon: true,
+                                  textStyles: subHeadline5.copyWith(
+                                    color: context.colors.cardGradient.first,
+                                  ),
+                                ),
+                              ),
+                            )
+                          ],
+                        ),
+                        customText(
+                          textValue: 'Exp ${data.expiryDate}',
+                          textStyle: bodyText2.copyWith(color: context.colors.onCard),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
             },
           ),
         ),
@@ -443,24 +456,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       indicatorPadding: const EdgeInsets.only(bottom: 8),
       indicatorSize: TabBarIndicatorSize.label,
       isScrollable: true,
-      labelColor: text,
-      unselectedLabelColor: secondary20,
+      labelColor: context.scheme.onSurface,
+      unselectedLabelColor: context.colors.subtleText,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       tabAlignment: TabAlignment.start,
+      onTap: (_) => setState(() {}),
       tabs: List.generate(
         homeScreenContentTabbar.length,
-        (index) => Tab(
-          text: homeScreenContentTabbar[index],
-        ),
+        (index) => Tab(text: homeScreenContentTabbar[index]),
       ),
     );
   }
 
-  Padding _buildHeader(AsyncSnapshot<Users?> snapshot) {
+  Padding _buildHeader(Users user) {
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 20,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -471,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               width: 44,
               height: 44,
               fit: BoxFit.cover,
-              imageUrl: snapshot.data!.image,
+              imageUrl: user.image,
               placeholder: (context, url) => Image.asset(
                 'lib/assets/images/profile.jpg',
                 fit: BoxFit.cover,
@@ -479,34 +489,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               errorWidget: (context, url, error) => const Icon(Icons.error),
             ),
           ),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              2,
-              (index) => Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 4,
+          Flexible(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: customText(
+                    textValue: greetingsFunction(),
+                    textStyle: subHeadline5,
+                  ),
                 ),
-                child: customText(
-                  textValue:
-                      index == 0 ? greetingsFunction() : snapshot.data!.name,
-                  textStyle: index == 0 ? subHeadline5 : headline4,
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: customText(
+                    textValue: user.name,
+                    textStyle: headline4,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
-          InkWell(
-            onTap: () {},
-            child: Container(
-              decoration: BoxDecoration(
-                  color: secondary10.withOpacity(.5), shape: BoxShape.circle),
-              padding: const EdgeInsets.all(10),
-              child: const Icon(
-                Icons.notifications_none_rounded,
-                color: primary100,
-                size: 28,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ThemeToggleButton(),
+              IconButton(
+                onPressed: () {},
+                tooltip: 'Notifications',
+                style: IconButton.styleFrom(
+                  backgroundColor: context.colors.mutedFill,
+                  shape: const CircleBorder(),
+                ),
+                icon: Icon(
+                  Icons.notifications_none_rounded,
+                  color: context.scheme.primary,
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),
@@ -519,11 +541,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
       splashBorderRadius: BorderRadius.circular(40),
       indicator: BoxDecoration(
-        borderRadius: BorderRadius.circular(40),
-        color: secondary0,
+        borderRadius: Radii.pillAll,
+        color: context.colors.sheetBackground,
       ),
-      labelColor: primary80,
-      unselectedLabelColor: secondary0,
+      labelColor: context.scheme.primary,
+      unselectedLabelColor: context.colors.onHeader,
       tabs: List.generate(
         homeScreenTabbar.length,
         (index) => Tab(
@@ -531,11 +553,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             crossAxisAlignment: CrossAxisAlignment.center,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(homeScreenTabbar[index]['icon']),
+              Icon(homeScreenTabbar[index]['icon'] as IconData),
               customSpaceHorizontal(4),
-              customText(
-                textValue: homeScreenTabbar[index]['name'].toString(),
-                textStyle: subHeadline5,
+              Flexible(
+                child: customText(
+                  textValue: homeScreenTabbar[index]['name'] as String,
+                  textStyle: subHeadline5,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),

@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-final List signUpTextFieldProperties = [
+/// Flat admin fee charged on every transfer, in whole rupiah.
+const int adminFeeIdr = 2500;
+
+/// Transfer types offered on the transfer form.
+const List<String> transactionTypes = ['BI-FAST', 'Online Transfer', 'RTGS'];
+
+final List<Map<String, dynamic>> signUpTextFieldProperties = [
   {
     'hintText': 'Full Name',
     'icon': Icons.person_2_rounded,
@@ -43,7 +49,7 @@ final List signUpTextFieldProperties = [
   },
 ];
 
-final List logInTextFieldProperties = [
+final List<Map<String, dynamic>> logInTextFieldProperties = [
   {
     'hintText': 'Email or Username',
     'icon': Icons.email_rounded,
@@ -62,13 +68,17 @@ final List logInTextFieldProperties = [
   },
 ];
 
-final List homeScreenTabbar = [
+final List<Map<String, dynamic>> homeScreenTabbar = [
   {'name': 'Tracker', 'icon': Icons.pie_chart},
   {'name': 'Home', 'icon': Icons.home_rounded},
   {'name': 'Porto', 'icon': Icons.badge_rounded},
 ];
 
-final homeScreenContentTabbar = ['Account', 'Card'];
+const List<String> homeScreenContentTabbar = ['Account', 'Card'];
 
-final List transactionScreenTabbar = ['Accounts', 'Favorites', 'Autodebit'];
-final List addTransactionScreenTabbar = ['Accounts', 'Favorites'];
+const List<String> transactionScreenTabbar = [
+  'Accounts',
+  'Favorites',
+  'Autodebit',
+];
+const List<String> addTransactionScreenTabbar = ['Accounts', 'Favorites'];

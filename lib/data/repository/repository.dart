@@ -6,99 +6,72 @@ import 'package:newtronic_banking/data/model/bank_model.dart';
 import 'package:newtronic_banking/data/model/transaction_model.dart';
 import 'package:newtronic_banking/data/model/user_model.dart';
 
+/// Reads the bundled JSON seed data.
+///
+/// Results are memoized because the widget tree calls these from `FutureBuilder`s
+/// that rebuild often, and re-reading plus re-decoding an asset on every frame is
+/// pure waste.
 class Repository {
-  Future<List<Users>> getUsers() async {
-    final String response =
-        await rootBundle.loadString('lib/assets/json/user.json');
-    final data = await json.decode(response)['users'];
-    final List<Users> users = [];
-    for (var i = 0; i < data.length; i++) {
-      users.add(Users.fromJson(data[i]));
-    }
-    return users;
+  Repository._();
+
+  static final Repository instance = Repository._();
+
+  factory Repository() => instance;
+
+  List<Users>? _users;
+  List<Balances>? _balances;
+  List<Transactions>? _transactions;
+  List<Banks>? _banks;
+
+  Future<List<dynamic>> _loadList(String assetPath, String key) async {
+    final response = await rootBundle.loadString(assetPath);
+    return json.decode(response)[key] as List<dynamic>;
   }
 
-  Future<Users?> getUserById({required id}) async {
-    final List<Users> users = await getUsers();
-    Users? user;
-    for (var i = 0; i < users.length; i++) {
-      if (users[i].id == id) {
-        user = users[i];
-      }
-    }
+  Future<List<Users>> getUsers() async {
+    return _users ??= (await _loadList('lib/assets/json/user.json', 'users'))
+        .map((item) => Users.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
 
-    return user;
+  Future<Users?> getUserById({required int id}) async {
+    final users = await getUsers();
+    for (final user in users) {
+      if (user.id == id) return user;
+    }
+    return null;
   }
 
   Future<Users?> loginUser({
-    required emailOrUsername,
-    required password,
+    required String emailOrUsername,
+    required String password,
   }) async {
-    final List<Users> users = await getUsers();
-    Users? user;
-    for (var i = 0; i < users.length; i++) {
-      if (users[i].email == emailOrUsername ||
-          users[i].username == emailOrUsername) {
-        if (users[i].password == password) {
-          user = users[i];
-        }
-      }
+    final users = await getUsers();
+    for (final user in users) {
+      final matchesIdentity =
+          user.email == emailOrUsername || user.username == emailOrUsername;
+      if (matchesIdentity && user.password == password) return user;
     }
-    return user;
+    return null;
   }
 
   Future<List<Balances>> getBalances() async {
-    final String response =
-        await rootBundle.loadString('lib/assets/json/balance.json');
-    final data = await json.decode(response)['data'];
-    final List<Balances> balances = [];
-    for (var i = 0; i < data.length; i++) {
-      balances.add(Balances.fromJson(data[i]));
-    }
-    return balances;
+    return _balances ??=
+        (await _loadList('lib/assets/json/balance.json', 'data'))
+            .map((item) => Balances.fromJson(item as Map<String, dynamic>))
+            .toList();
   }
 
   Future<List<Transactions>> getTransactions() async {
-    final String response =
-        await rootBundle.loadString('lib/assets/json/transaction.json');
-    final data = await json.decode(response)['transactions'];
-    final List<Transactions> transactions = [];
-    for (var i = 0; i < data.length; i++) {
-      transactions.add(Transactions.fromJson(data[i]));
-    }
-    return transactions;
+    return _transactions ??=
+        (await _loadList('lib/assets/json/transaction.json', 'transactions'))
+            .map((item) => Transactions.fromJson(item as Map<String, dynamic>))
+            .toList();
   }
 
   Future<List<Banks>> getBanks() async {
-    final String response =
-        await rootBundle.loadString('lib/assets/json/bank.json');
-    final data = await json.decode(response)['banks'];
-    final List<Banks> banks = [];
-    for (var i = 0; i < data.length; i++) {
-      banks.add(Banks.fromJson(data[i]));
-    }
-    return banks;
-  }
-
-  Future<Banks> getBanksById({required id}) async {
-    final List<Banks> banks = await getBanks();
-    Banks? bank;
-    for (var i = 0; i < banks.length; i++) {
-      if (banks[i].id == id) {
-        bank = banks[i];
-      }
-    }
-    return bank!;
-  }
-
-  Future<List<Banks>> searchBankByName({required name}) async {
-    final List<Banks> banks = await getBanks();
-    final List<Banks> searchResult = [];
-    for (var i = 0; i < banks.length; i++) {
-      if (banks[i].name.toLowerCase().contains(name.toLowerCase())) {
-        searchResult.add(banks[i]);
-      }
-    }
-    return searchResult;
+    return _banks ??= (await _loadList('lib/assets/json/bank.json', 'banks'))
+        .map((item) => Banks.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 }

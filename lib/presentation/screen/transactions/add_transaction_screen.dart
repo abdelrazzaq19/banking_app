@@ -1,17 +1,27 @@
+import 'dart:math';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lottie/lottie.dart';
 import 'package:newtronic_banking/common/constants.dart';
+import 'package:newtronic_banking/data/model/balance_model.dart';
+import 'package:newtronic_banking/data/model/bank_model.dart';
+import 'package:newtronic_banking/data/model/transfer_receipt.dart';
 import 'package:newtronic_banking/data/repository/repository.dart';
+import 'package:newtronic_banking/data/utils/formatted.dart';
 import 'package:newtronic_banking/presentation/screen/transactions/status_transaction_screen.dart';
 import 'package:newtronic_banking/presentation/widget/components.dart';
-import 'package:newtronic_banking/styles/pallet.dart';
+import 'package:newtronic_banking/core/theme/app_colors.dart';
+import 'package:newtronic_banking/core/theme/motion.dart';
+import 'package:newtronic_banking/core/theme/tokens.dart';
 import 'package:newtronic_banking/styles/typography.dart';
 
 class AddTransactionScreen extends StatefulWidget {
-  const AddTransactionScreen({super.key});
+  const AddTransactionScreen({super.key, required this.userId});
   static const routeName = '/add-transaction';
+
+  final int userId;
 
   @override
   State<AddTransactionScreen> createState() => _AddTransactionScreenState();
@@ -19,91 +29,99 @@ class AddTransactionScreen extends StatefulWidget {
 
 class _AddTransactionScreenState extends State<AddTransactionScreen>
     with SingleTickerProviderStateMixin {
+  static const int _accountNumberLength = 12;
+  static const int _minTransfer = 10000;
+  static const int _maxTransfer = 500000000;
+
   final PageController pageController = PageController();
-  final TextEditingController bankNameController = TextEditingController();
   final TextEditingController bankNumberController = TextEditingController();
-  final TextEditingController searchController = TextEditingController();
+  final TextEditingController recipientNameController = TextEditingController();
+  final TextEditingController bankSearchController = TextEditingController();
+  final TextEditingController accountSearchController = TextEditingController();
   final TextEditingController transferController = TextEditingController();
-  final TextEditingController typeController = TextEditingController();
   final TextEditingController noteController = TextEditingController();
-  final List<Map<String, String>> banks = [];
-  final List<Map<String, String>> balances = [];
-  final List<Map<String, String>> tempBank = [];
-  final List<Map<String, String>> tempBalance = [];
-  List<Map<String, dynamic>> filteredBanks = [];
-  List<Map<String, dynamic>> filteredBalances = [];
+
+  List<Banks> banks = [];
+  List<Banks> filteredBanks = [];
+  List<Balances> balances = [];
+  List<Balances> filteredBalances = [];
+
+  /// The destination bank, chosen from the picker. Null until one is selected —
+  /// previously this was a list that other code indexed at `[0]` unguarded.
+  Banks? selectedBank;
+
+  /// The account the money leaves from.
+  Balances? selectedAccount;
 
   late TabController tabController;
   int pageIndex = 0;
-  String errorText = '';
+  String accountNumberErrorText = '';
+  String recipientErrorText = '';
   String transferErrorText = '';
-  String typeErrorText = '';
   String noteErrorText = '';
-  String accountName = '';
-  String accountNumber = '';
-  String accountBalance = '';
+  String transactionType = transactionTypes.first;
 
   void initializeTabController() {
     tabController =
         TabController(length: addTransactionScreenTabbar.length, vsync: this);
   }
 
-  void fetchData() async {
-    final bank = await Repository().getBanks();
-    final balance = await Repository().getBalances();
-    filteredBanks = List.from(banks);
-    filteredBalances = List.from(balances);
+  Future<void> fetchData() async {
+    final loadedBanks = await Repository().getBanks();
+    final loadedBalances = await Repository().getBalances();
+    if (!mounted) return;
 
-    for (var i = 0; i < balance.length; i++) {
-      setState(
-        () => balances.add({
-          'id': balance[i].id.toString(),
-          'name': balance[i].cardName,
-          'number': balance[i].cardNumber,
-          'balance': balance[i].balance,
-        }),
-      );
-    }
-
-    for (var i = 0; i < bank.length; i++) {
-      setState(
-        () => banks.add({
-          'id': bank[i].id.toString(),
-          'name': bank[i].name,
-          'number': bank[i].number,
-          'image': bank[i].image,
-        }),
-      );
-    }
-
+    // The filtered copies must be taken *after* the data arrives. Copying them
+    // up front left both pickers permanently empty.
     setState(() {
-      accountName = balances[0]['name']!;
-      accountNumber = balances[0]['number']!;
-      accountBalance = balances[0]['balance']!;
-      typeController.text = 'BI-FAST';
+      banks = loadedBanks;
+      filteredBanks = List.of(loadedBanks);
+      balances = loadedBalances;
+      filteredBalances = List.of(loadedBalances);
+      selectedAccount = loadedBalances.isEmpty ? null : loadedBalances.first;
     });
   }
 
   @override
   void initState() {
-    fetchData();
-    initializeTabController();
     super.initState();
+    initializeTabController();
+    fetchData();
   }
 
   @override
   void dispose() {
     pageController.dispose();
-    bankNameController.dispose();
     bankNumberController.dispose();
-    searchController.dispose();
+    recipientNameController.dispose();
+    bankSearchController.dispose();
+    accountSearchController.dispose();
+    transferController.dispose();
+    noteController.dispose();
     tabController.dispose();
     super.dispose();
   }
 
+  bool get isRecipientStepComplete =>
+      selectedBank != null &&
+      recipientNameController.text.trim().isNotEmpty &&
+      bankNumberController.text.length == _accountNumberLength &&
+      accountNumberErrorText.isEmpty &&
+      recipientErrorText.isEmpty;
+
+  bool get isAmountStepComplete =>
+      transferController.text.isNotEmpty &&
+      transferErrorText.isEmpty &&
+      noteErrorText.isEmpty &&
+      selectedAccount != null;
+
+  bool get isCurrentStepComplete =>
+      pageIndex == 0 ? isRecipientStepComplete : isAmountStepComplete;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: context.scheme.surface,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -129,21 +147,26 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
         InkWell(
           onTap: () {
             if (pageIndex == 1) {
-              pageController.animateToPage(0,
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeIn);
+              pageController.animateToPage(
+                0,
+                duration: Motion.medium,
+                curve: Motion.move,
+              );
             } else {
               Navigator.pop(context);
             }
           },
-          child: const Icon(
+          child: Icon(
             Icons.arrow_back_ios_rounded,
             size: 24,
-            color: primary90,
+            color: context.scheme.primary,
           ),
         ),
         customSpaceVertical(16),
-        customText(textValue: 'New Transfer', textStyle: headline1),
+        customText(
+          textValue: 'New Transfer',
+          textStyle: headline1.copyWith(color: context.scheme.onSurface),
+        ),
       ],
     );
   }
@@ -155,8 +178,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
         onPageChanged: (value) => setState(() => pageIndex = value),
         physics: const NeverScrollableScrollPhysics(),
         itemCount: 2,
-        itemBuilder: (context, pageIndex) {
-          switch (pageIndex) {
+        itemBuilder: (context, page) {
+          switch (page) {
             case 0:
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -167,151 +190,176 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
                   _buildTabBarView(context),
                 ],
               );
-            case 1:
-              return SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: [
-                    _buildWalletTiles(),
-                    customSpaceVertical(66),
-                    TextField(
-                      controller: transferController,
-                      style: headline5.copyWith(color: text),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      onChanged: (value) {
-                        if (value.isEmpty) {
-                          setState(
-                              () => transferErrorText = 'Transfer is empty');
-                        } else {
-                          final numericValue = int.tryParse(value);
-                          if (numericValue == null) {
-                            setState(() => transferErrorText = 'Invalid input');
-                          } else if (numericValue < 10000 ||
-                              numericValue > 500000000) {
-                            setState(() => transferErrorText =
-                                'Transfer must be between Rp 10.000 and Rp 500.000.000');
-                          } else {
-                            setState(() => transferErrorText = '');
-                          }
-                        }
-                      },
-                      decoration: InputDecoration(
-                        errorText: transferErrorText.isEmpty
-                            ? null
-                            : transferErrorText,
-                        hintText: 'Nominal Transfer',
-                        hintStyle: bodyText2.copyWith(color: text),
-                        prefix: customText(
-                          textValue: 'Rp. ',
-                          textStyle: headline5.copyWith(color: text),
-                        ),
-                        border: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: secondary20),
-                        ),
-                      ),
-                    ),
-                    customSpaceVertical(4),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        customText(
-                          textValue: 'Saldo $accountName',
-                          textStyle: subHeadline5.copyWith(
-                              color: text.withOpacity(.5)),
-                        ),
-                        customText(
-                          textValue: 'Rp. $accountBalance',
-                          textStyle: subHeadline5.copyWith(
-                              color: text.withOpacity(.5)),
-                        ),
-                      ],
-                    ),
-                    customSpaceVertical(16),
-                    TextField(
-                      controller: typeController,
-                      style: headline5.copyWith(color: text),
-                      onChanged: (value) {
-                        if (value.length > 20) {
-                          setState(() => typeErrorText =
-                              'Notes maximum length is 20 characters');
-                        } else {
-                          setState(() => typeErrorText = '');
-                        }
-                      },
-                      decoration: InputDecoration(
-                        enabled: false,
-                        suffixText: 'Rp. 2.500',
-                        suffixStyle: bodyText2.copyWith(color: Colors.green),
-                        label: customText(
-                          textValue: 'Transaction Type',
-                          textStyle: bodyText2.copyWith(color: text),
-                        ),
-                        errorText: typeErrorText.isEmpty ? null : typeErrorText,
-                        border: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: secondary20),
-                        ),
-                        disabledBorder: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: secondary20),
-                        ),
-                      ),
-                    ),
-                    customSpaceVertical(16),
-                    TextField(
-                      controller: noteController,
-                      style: headline5.copyWith(color: text),
-                      onChanged: (value) {
-                        if (value.length > 20) {
-                          setState(() => noteErrorText =
-                              'Notes maximum length is 20 characters');
-                        } else {
-                          setState(() => noteErrorText = '');
-                        }
-                      },
-                      decoration: InputDecoration(
-                        errorText: noteErrorText.isEmpty ? null : noteErrorText,
-                        hintText: 'Note (Optional)',
-                        hintStyle: bodyText2.copyWith(color: text),
-                        border: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: secondary20),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
             default:
-              return Center(
-                child: LottieBuilder.asset(
-                  'lib/assets/lotties/lottieLoading.json',
-                  height: 140,
-                ),
-              );
+              return _buildAmountStep(context);
           }
         },
       ),
     );
   }
 
-  ListView _buildWalletTiles() {
-    return ListView.separated(
-      scrollDirection: Axis.vertical,
-      separatorBuilder: (context, index) => customSpaceVertical(8),
-      shrinkWrap: true,
-      itemCount: 2,
-      itemBuilder: (context, tileIndex) => InkWell(
-        onTap: () {
-          if (tileIndex == 0) {
-            customShowAccountLists(context);
-          }
-        },
-        child: ListTile(
+  Widget _buildAmountStep(BuildContext context) {
+    final balanceLabel = selectedAccount?.cardName ?? '-';
+    final balanceValue = selectedAccount?.balance.trim() ?? '0';
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.start,
+        children: [
+          _buildWalletTiles(),
+          customSpaceVertical(32),
+          TextField(
+            controller: transferController,
+            style: numeric(headline5).copyWith(color: context.scheme.onSurface),
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (value) =>
+                setState(() => transferErrorText = _validateTransfer(value)),
+            decoration: InputDecoration(
+              errorText:
+                  transferErrorText.isEmpty ? null : transferErrorText,
+              filled: false,
+              hintText: 'Nominal Transfer',
+              hintStyle: bodyText2.copyWith(color: context.colors.subtleText),
+              prefix: customText(
+                textValue: 'Rp ',
+                textStyle: headline5.copyWith(color: context.scheme.onSurface),
+              ),
+              border: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+            ),
+          ),
+          customSpaceVertical(4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: customText(
+                  textValue: 'Saldo $balanceLabel',
+                  textStyle: subHeadline5.copyWith(
+                    color: context.colors.subtleText,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              customText(
+                textValue: 'Rp $balanceValue',
+                textStyle: numeric(subHeadline5).copyWith(
+                  color: context.colors.subtleText,
+                ),
+              ),
+            ],
+          ),
+          customSpaceVertical(16),
+          DropdownButtonFormField<String>(
+            initialValue: transactionType,
+            decoration: InputDecoration(
+              filled: false,
+              label: customText(
+                textValue: 'Transaction Type',
+                textStyle: bodyText2.copyWith(color: context.colors.subtleText),
+              ),
+              suffixText: formatRupiahWithSymbol(adminFeeIdr),
+              suffixStyle: bodyText2.copyWith(color: context.colors.success),
+              border: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+            ),
+            items: transactionTypes
+                .map((type) => DropdownMenuItem<String>(
+                      value: type,
+                      child: customText(
+                        textValue: type,
+                        textStyle: subHeadline5.copyWith(
+                          color: context.scheme.onSurface,
+                        ),
+                      ),
+                    ))
+                .toList(),
+            onChanged: (value) => setState(
+                () => transactionType = value ?? transactionTypes.first),
+          ),
+          customSpaceVertical(16),
+          TextField(
+            controller: noteController,
+            style: numeric(headline5).copyWith(color: context.scheme.onSurface),
+            onChanged: (value) => setState(() => noteErrorText = value.length > 20
+                ? 'Notes maximum length is 20 characters'
+                : ''),
+            decoration: InputDecoration(
+              errorText: noteErrorText.isEmpty ? null : noteErrorText,
+              filled: false,
+              hintText: 'Note (Optional)',
+              hintStyle: bodyText2.copyWith(color: context.colors.subtleText),
+              border: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _validateTransfer(String value) {
+    if (value.isEmpty) return 'Transfer is empty';
+    final amount = int.tryParse(value);
+    if (amount == null) return 'Invalid input';
+    if (amount < _minTransfer || amount > _maxTransfer) {
+      return 'Transfer must be between '
+          '${formatRupiahWithSymbol(_minTransfer)} and '
+          '${formatRupiahWithSymbol(_maxTransfer)}';
+    }
+    return '';
+  }
+
+  Widget _buildWalletTiles() {
+    final destination = selectedBank;
+    return Column(
+      children: [
+        ListTile(
+          onTap: showAccountPicker,
+          contentPadding: EdgeInsets.zero,
           leading: ClipRRect(
             borderRadius: BorderRadius.circular(40),
-            child: tileIndex == 0
+            child: Image.asset(
+              'lib/assets/images/newtronic.png',
+              width: 44,
+              height: 44,
+              fit: BoxFit.cover,
+            ),
+          ),
+          title: customText(
+            textValue: selectedAccount?.cardName ?? 'Select account',
+            textStyle: headline5.copyWith(color: context.scheme.onSurface),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: customText(
+            textValue: selectedAccount?.cardNumber ?? '-',
+            textStyle: bodyText2.copyWith(color: context.colors.subtleText),
+          ),
+          trailing: const Icon(Icons.keyboard_arrow_down_rounded),
+        ),
+        customSpaceVertical(8),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(40),
+            child: destination == null
                 ? Image.asset(
-                    'lib/assets/images/newtronic.png',
+                    'lib/assets/images/profile.jpg',
                     width: 44,
                     height: 44,
                     fit: BoxFit.cover,
@@ -320,7 +368,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
                     width: 44,
                     height: 44,
                     fit: BoxFit.cover,
-                    imageUrl: tempBank[0]['image']!,
+                    imageUrl: destination.image,
                     placeholder: (context, url) => Image.asset(
                       'lib/assets/images/profile.jpg',
                       fit: BoxFit.cover,
@@ -330,36 +378,40 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
                   ),
           ),
           title: customText(
-            textValue: tileIndex == 0 ? accountName : 'Rafeh Qazi',
-            textStyle: headline5,
+            textValue: recipientNameController.text.trim().isEmpty
+                ? 'Recipient'
+                : recipientNameController.text.trim(),
+            textStyle: headline5.copyWith(color: context.scheme.onSurface),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           subtitle: customText(
-            textValue: tileIndex == 0
-                ? accountNumber
-                : '${bankNameController.text}\n${bankNumberController.text.substring(0, 4)} **** **** ${bankNumberController.text.substring(8, 12)}',
-            textStyle: bodyText2.copyWith(color: text),
+            // `substring(0, 4)` / `substring(8, 12)` used to throw whenever the
+            // number was shorter than twelve digits.
+            textValue: '${destination?.name ?? '-'}\n'
+                '${maskedBankNumber(bankNumberController.text)}',
+            textStyle: bodyText2.copyWith(color: context.colors.subtleText),
           ),
-          trailing: tileIndex == 0
-              ? const Icon(Icons.keyboard_arrow_down_rounded)
-              : null,
         ),
-      ),
+      ],
     );
   }
 
   Container _buildTabBar() {
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(40),
-        color: secondary10.withOpacity(.5),
+        borderRadius: Radii.pillAll,
+        color: context.colors.mutedFill,
       ),
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(Insets.xxs),
       child: TabBar(
         controller: tabController,
         indicator: BoxDecoration(
-            borderRadius: BorderRadius.circular(40), color: secondary0),
-        labelColor: text,
-        unselectedLabelColor: text.withOpacity(.25),
+          borderRadius: Radii.pillAll,
+          color: context.scheme.surface,
+        ),
+        labelColor: context.scheme.onSurface,
+        unselectedLabelColor: context.colors.subtleText,
         tabs: List.generate(
           addTransactionScreenTabbar.length,
           (index) => Tab(text: addTransactionScreenTabbar[index]),
@@ -374,171 +426,304 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
         controller: tabController,
         children: List.generate(
           tabController.length,
-          (index) {
-            switch (index) {
-              case 0:
-                return Column(
-                  children: [
-                    InkWell(
-                      onTap: () => customDraggableModalBottomSheet(context),
-                      child: TextField(
-                        controller: bankNameController,
-                        style: subHeadline5.copyWith(color: text),
-                        decoration: InputDecoration(
-                          enabled: false,
-                          hintText: 'Bank Name',
-                          hintStyle: bodyText2.copyWith(color: text),
-                          suffixIcon:
-                              const Icon(Icons.keyboard_arrow_down_rounded),
-                          border: const UnderlineInputBorder(
-                            borderSide: BorderSide(color: secondary20),
-                          ),
-                          disabledBorder: const UnderlineInputBorder(
-                            borderSide: BorderSide(color: secondary20),
-                          ),
-                        ),
-                      ),
-                    ),
-                    customSpaceVertical(16),
-                    TextField(
-                      controller: bankNumberController,
-                      style: subHeadline5.copyWith(color: text),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      onChanged: (value) {
-                        if (value.length < 12 || value.length > 12) {
-                          setState(
-                              () => errorText = 'Account number must be 12');
-                        } else {
-                          setState(() => errorText = '');
-                        }
-                      },
-                      decoration: InputDecoration(
-                        errorText: errorText.isEmpty ? null : errorText,
-                        hintText: 'Account Number',
-                        hintStyle: bodyText2.copyWith(color: text),
-                        border: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: secondary20),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              default:
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      LottieBuilder.asset(
-                        'lib/assets/lotties/lottieAsk.json',
-                        width: MediaQuery.of(context).size.width / 2.5,
-                      ),
-                      customSpaceVertical(16),
-                      customText(
-                        textValue:
-                            'You don\'t have any favorite transactions yet',
-                        textStyle: subHeadline4.copyWith(
-                          color: text.withOpacity(.5),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                );
-            }
-          },
+          (index) => index == 0
+              ? _buildRecipientForm()
+              : _buildNoFavoritesYet(context),
         ),
+      ),
+    );
+  }
+
+  Widget _buildRecipientForm() {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // An InputDecorator rather than a disabled TextField: the field is a
+          // button, so it needs no controller (one built in `build` would leak
+          // a new instance every frame) and stays hit-testable.
+          InkWell(
+            key: const ValueKey('bank-name-field'),
+            onTap: showBankPicker,
+            child: InputDecorator(
+              decoration: InputDecoration(
+                filled: false,
+                suffixIcon: const Icon(Icons.keyboard_arrow_down_rounded),
+                border: UnderlineInputBorder(
+                  borderSide: BorderSide(color: context.colors.mutedBorder),
+                ),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: context.colors.mutedBorder),
+                ),
+              ),
+              child: customText(
+                textValue: selectedBank?.name ?? 'Bank Name',
+                textStyle: selectedBank == null
+                    ? bodyText2.copyWith(color: context.colors.subtleText)
+                    : subHeadline5.copyWith(color: context.scheme.onSurface),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          customSpaceVertical(16),
+          TextField(
+            controller: bankNumberController,
+            style: numeric(subHeadline5).copyWith(color: context.scheme.onSurface),
+            keyboardType: TextInputType.number,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(_accountNumberLength),
+            ],
+            onChanged: (value) => setState(() {
+              accountNumberErrorText = value.length == _accountNumberLength
+                  ? ''
+                  : 'Account number must be $_accountNumberLength digits';
+            }),
+            decoration: InputDecoration(
+              errorText: accountNumberErrorText.isEmpty
+                  ? null
+                  : accountNumberErrorText,
+              filled: false,
+              hintText: 'Account Number',
+              hintStyle: bodyText2.copyWith(color: context.colors.subtleText),
+              border: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+            ),
+          ),
+          customSpaceVertical(16),
+          TextField(
+            controller: recipientNameController,
+            style: subHeadline5.copyWith(color: context.scheme.onSurface),
+            textCapitalization: TextCapitalization.words,
+            onChanged: (value) => setState(() {
+              recipientErrorText =
+                  value.trim().isEmpty ? 'Recipient name is required' : '';
+            }),
+            decoration: InputDecoration(
+              errorText:
+                  recipientErrorText.isEmpty ? null : recipientErrorText,
+              filled: false,
+              hintText: 'Recipient Name',
+              hintStyle: bodyText2.copyWith(color: context.colors.subtleText),
+              border: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: context.colors.mutedBorder),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoFavoritesYet(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          LottieBuilder.asset(
+            'lib/assets/lotties/lottieAsk.json',
+            width: MediaQuery.of(context).size.width / 2.5,
+          ),
+          customSpaceVertical(16),
+          customText(
+            textValue: 'You don\'t have any favorite transactions yet',
+            textStyle: subHeadline4.copyWith(color: context.colors.subtleText),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
 
   InkWell _buildButton(BuildContext context) {
+    final isEnabled = isCurrentStepComplete;
     return customButton(
       buttonOnTap: () {
-        switch (pageIndex) {
-          case 0:
-            if (bankNameController.text.isNotEmpty &&
-                bankNumberController.text.isNotEmpty &&
-                errorText.isEmpty) {
-              pageController.animateToPage(1,
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeIn);
-            }
-            break;
-          case 1:
-            if (transferController.text.isNotEmpty &&
-                transferErrorText.isEmpty &&
-                typeErrorText.isEmpty &&
-                noteErrorText.isEmpty) {
-              customDialogWithButton(
-                context,
-                dialogTextValue: 'Are you sure want to transfer?',
-                dialogAction: () {
-                  final List<Map<String, String>> transactionStatus = [
-                    {
-                      'nominal': transferController.text,
-                      'bank': bankNameController.text,
-                      'number': bankNumberController.text,
-                      'image': tempBank[0]['image']!,
-                      'type': typeController.text,
-                      'ref': '1696 2200 4022 5002',
-                      'admin': 'Rp. 2.500',
-                      'total':
-                          'Rp. ${int.parse(transferController.text) + 2500}',
-                    }
-                  ];
-                  Navigator.pop(context);
-                  Future.delayed(const Duration(seconds: 2), () {
-                    Navigator.pop(context);
-                  }).then((value) => Navigator.pushNamed(
-                      context, StatusTransactionScreen.routeName,
-                      arguments: transactionStatus));
-                  customDialog(
-                    context,
-                    animationIcon: 'lib/assets/lotties/lottieSuccess.json',
-                    textDialog: 'Transfer Success',
-                  );
-                },
-              );
-            }
-            break;
+        if (pageIndex == 0) {
+          if (!isRecipientStepComplete) return;
+          pageController.animateToPage(
+            1,
+            duration: Motion.medium,
+            curve: Motion.move,
+          );
+          return;
         }
+        if (!isAmountStepComplete) return;
+        _confirmTransfer(context);
       },
       buttonText: pageIndex == 0 ? 'Next' : 'Confirm',
       buttonWidth: MediaQuery.of(context).size.width,
-      buttonFirstGradientColor: pageIndex == 0 &&
-              bankNameController.text.isNotEmpty &&
-              bankNumberController.text.isNotEmpty &&
-              errorText.isEmpty
-          ? primary80
-          : (pageIndex == 1 &&
-                  transferController.text.isNotEmpty &&
-                  transferErrorText.isEmpty &&
-                  typeErrorText.isEmpty &&
-                  noteErrorText.isEmpty)
-              ? primary80
-              : secondary20,
-      buttonSecondGradientColor: pageIndex == 0 &&
-              bankNameController.text.isNotEmpty &&
-              bankNumberController.text.isNotEmpty &&
-              errorText.isEmpty
-          ? primary90
-          : (pageIndex == 1 &&
-                  transferController.text.isNotEmpty &&
-                  transferErrorText.isEmpty &&
-                  typeErrorText.isEmpty &&
-                  noteErrorText.isEmpty)
-              ? primary90
-              : secondary20,
+      buttonFirstGradientColor:
+          isEnabled ? context.scheme.primary : context.colors.mutedBorder,
+      buttonSecondGradientColor:
+          isEnabled ? context.colors.accent : context.colors.mutedBorder,
+      textColor:
+          isEnabled ? context.scheme.onPrimary : context.colors.subtleText,
     );
   }
 
-  Future<dynamic> customShowAccountLists(BuildContext context) {
-    return showModalBottomSheet(
+  void _confirmTransfer(BuildContext context) {
+    final bank = selectedBank;
+    final account = selectedAccount;
+    final nominal = int.tryParse(transferController.text);
+    if (bank == null || account == null || nominal == null) return;
+
+    customDialogWithButton(
+      context,
+      dialogTextValue: 'Are you sure want to transfer '
+          '${formatRupiahWithSymbol(nominal)}?',
+      dialogAction: () {
+        Navigator.pop(context);
+        final receipt = TransferReceipt(
+          userId: widget.userId,
+          recipientName: recipientNameController.text.trim(),
+          bankName: bank.name,
+          bankImage: bank.image,
+          accountNumber: bankNumberController.text,
+          sourceAccountName: account.cardName,
+          nominal: nominal,
+          transactionType: transactionType,
+          reference: _generateReference(),
+          createdAt: DateTime.now(),
+          note: noteController.text.trim().isEmpty
+              ? null
+              : noteController.text.trim(),
+        );
+        showSuccessDialog(
+          context,
+          message: 'Transfer Success',
+          onAction: () => Navigator.pushReplacementNamed(
+            context,
+            StatusTransactionScreen.routeName,
+            arguments: receipt,
+          ),
+        );
+      },
+    );
+  }
+
+  /// A 16-digit reference, grouped for display. Previously every receipt showed
+  /// the same hardcoded `1696 2200 4022 5002`.
+  String _generateReference() {
+    final random = Random();
+    final digits = StringBuffer(
+      DateTime.now().millisecondsSinceEpoch.toString(),
+    );
+    while (digits.length < 16) {
+      digits.write(random.nextInt(10));
+    }
+    return formattedBankNumber(digits.toString().substring(0, 16));
+  }
+
+  Future<void> showAccountPicker() {
+    accountSearchController.clear();
+    filteredBalances = List.of(balances);
+    return _showPickerSheet(
+      title: 'Select Account',
+      searchController: accountSearchController,
+      onSearch: (query) => filteredBalances = balances
+          .where((account) =>
+              account.cardName.toLowerCase().contains(query.toLowerCase()) ||
+              account.cardNumber.toLowerCase().contains(query.toLowerCase()))
+          .toList(),
+      itemCount: () => filteredBalances.length,
+      itemBuilder: (context, index) {
+        final account = filteredBalances[index];
+        return ListTile(
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(40),
+            child: Image.asset(
+              'lib/assets/images/newtronic.png',
+              width: 44,
+              height: 44,
+              fit: BoxFit.cover,
+            ),
+          ),
+          title: customText(
+            textValue: account.cardName,
+            textStyle: headline5.copyWith(color: context.scheme.onSurface),
+          ),
+          subtitle: customText(
+            textValue: account.cardNumber,
+            textStyle: numeric(bodyText2).copyWith(
+              color: context.colors.subtleText,
+            ),
+          ),
+          onTap: () {
+            setState(() => selectedAccount = account);
+            Navigator.pop(context);
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> showBankPicker() {
+    bankSearchController.clear();
+    filteredBanks = List.of(banks);
+    return _showPickerSheet(
+      title: 'Select Bank',
+      searchController: bankSearchController,
+      onSearch: (query) => filteredBanks = banks
+          .where((bank) =>
+              bank.name.toLowerCase().contains(query.toLowerCase()))
+          .toList(),
+      itemCount: () => filteredBanks.length,
+      itemBuilder: (context, index) {
+        final bank = filteredBanks[index];
+        return ListTile(
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(40),
+            child: CachedNetworkImage(
+              width: 44,
+              height: 44,
+              fit: BoxFit.cover,
+              imageUrl: bank.image,
+              placeholder: (context, url) => Image.asset(
+                'lib/assets/images/profile.jpg',
+                fit: BoxFit.cover,
+              ),
+              errorWidget: (context, url, error) => const Icon(Icons.error),
+            ),
+          ),
+          title: customText(
+            textValue: bank.name,
+            textStyle: headline5.copyWith(color: context.scheme.onSurface),
+          ),
+          onTap: () {
+            setState(() => selectedBank = bank);
+            Navigator.pop(context);
+          },
+        );
+      },
+    );
+  }
+
+  /// One searchable bottom sheet used by both pickers.
+  ///
+  /// The two copies this replaced had diverged: the account one filtered into a
+  /// scratch list it never rendered, and gated selection behind that list being
+  /// non-empty, so no account could ever be chosen.
+  Future<void> _showPickerSheet({
+    required String title,
+    required TextEditingController searchController,
+    required void Function(String query) onSearch,
+    required int Function() itemCount,
+    required Widget Function(BuildContext context, int index) itemBuilder,
+  }) {
+    return showModalBottomSheet<void>(
       context: context,
-      barrierColor: text.withOpacity(.5),
+      barrierColor: Colors.black.withValues(alpha: Alphas.scrim),
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(16),
@@ -546,238 +731,78 @@ class _AddTransactionScreenState extends State<AddTransactionScreen>
         ),
       ),
       isDismissible: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => Container(
-          width: MediaQuery.of(context).size.width,
-          decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16), color: secondary0),
-          child: IntrinsicHeight(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.start,
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: Container(
-                      width: 80,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(4),
-                        color: text.withOpacity(.25),
-                      ),
+      builder: (sheetContext) => StatefulBuilder(
+        // Material rather than a coloured Container: a DecoratedBox between the
+        // ListTiles and their nearest Material swallows their ink splashes, and
+        // the framework asserts on it.
+        builder: (sheetContext, setSheetState) => Material(
+          color: sheetContext.scheme.surface,
+          borderRadius: Radii.mdAll,
+          child: Container(
+            height: MediaQuery.of(sheetContext).size.height * .7,
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 16,
+              bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                Align(
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 80,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color: sheetContext.colors.mutedBorder,
                     ),
                   ),
-                  customSpaceVertical(16),
-                  customText(
-                    textValue: 'Select Bank',
-                    textStyle: headline5,
+                ),
+                customSpaceVertical(16),
+                customText(
+                  textValue: title,
+                  textStyle: headline5.copyWith(
+                    color: sheetContext.scheme.onSurface,
                   ),
-                  customSpaceVertical(16),
-                  customTextField(
-                    controller: searchController,
-                    hintText: 'Search',
-                    errorText: '',
-                    prefixIcon: Icons.search_rounded,
-                    isFilled: true,
-                    onChanged: (value) {
-                      if (value.isNotEmpty) {
-                        setState(() {
-                          tempBalance.addAll(balances.where((element) =>
-                              element['name']!
-                                  .toLowerCase()
-                                  .contains(value.toLowerCase()) ||
-                              element['number']!
-                                  .toLowerCase()
-                                  .contains(value.toLowerCase())));
-                        });
-                      } else {
-                        setState(() {
-                          if (tempBalance.isNotEmpty) tempBalance.clear();
-                        });
-                      }
-                    },
-                  ),
-                  customSpaceVertical(16),
-                  Expanded(
-                    child: SizedBox(
-                      height: MediaQuery.of(context).size.height / 2,
-                      child: filteredBalances.isEmpty
-                          ? Center(
-                              child: customText(
-                                textValue: '${searchController.text} not found',
-                                textStyle: subHeadline5,
-                              ),
-                            )
-                          : ListView.separated(
-                              scrollDirection: Axis.vertical,
-                              separatorBuilder: (context, index) =>
-                                  customSpaceVertical(16),
-                              itemCount: filteredBalances.length,
-                              itemBuilder: (context, index) => InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    if (tempBalance.isNotEmpty) {
-                                      tempBalance.clear();
-                                      accountName =
-                                          filteredBalances[index]['name']!;
-                                      accountNumber =
-                                          filteredBalances[index]['number']!;
-                                    }
-                                  });
-                                  Navigator.pop(context);
-                                },
-                                child: ListTile(
-                                  leading: ClipRRect(
-                                      borderRadius: BorderRadius.circular(40),
-                                      child: Image.asset(
-                                          'lib/assets/images/newtronic.png')),
-                                  title: customText(
-                                    textValue: filteredBalances[index]['name']!,
-                                    textStyle: headline5,
-                                  ),
-                                ),
-                              ),
+                ),
+                customSpaceVertical(16),
+                customTextField(
+                  sheetContext,
+                  controller: searchController,
+                  hintText: 'Search',
+                  errorText: '',
+                  prefixIcon: Icons.search_rounded,
+                  isFilled: true,
+                  onChanged: (query) => setSheetState(() => onSearch(query)),
+                ),
+                customSpaceVertical(16),
+                Expanded(
+                  child: itemCount() == 0
+                      ? Center(
+                          child: customText(
+                            textValue: '"${searchController.text}" not found',
+                            textStyle: subHeadline5.copyWith(
+                              color: sheetContext.colors.subtleText,
                             ),
-                    ),
-                  ),
-                ],
-              ),
+                            textAlign: TextAlign.center,
+                          ),
+                        )
+                      : ListView.separated(
+                          scrollDirection: Axis.vertical,
+                          separatorBuilder: (context, index) =>
+                              customSpaceVertical(8),
+                          itemCount: itemCount(),
+                          itemBuilder: itemBuilder,
+                        ),
+                ),
+              ],
             ),
           ),
         ),
       ),
     );
-  }
-
-  Future<dynamic> customDraggableModalBottomSheet(BuildContext context) {
-    return showModalBottomSheet(
-      context: context,
-      barrierColor: text.withOpacity(.5),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(16),
-          topRight: Radius.circular(16),
-        ),
-      ),
-      isDismissible: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => Container(
-          width: MediaQuery.of(context).size.width,
-          decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16), color: secondary0),
-          child: IntrinsicHeight(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.start,
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: Container(
-                      width: 80,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(4),
-                        color: text.withOpacity(.25),
-                      ),
-                    ),
-                  ),
-                  customSpaceVertical(16),
-                  customText(
-                    textValue: 'Select Bank',
-                    textStyle: headline5,
-                  ),
-                  customSpaceVertical(16),
-                  customTextField(
-                    controller: searchController,
-                    hintText: 'Search',
-                    errorText: '',
-                    prefixIcon: Icons.search_rounded,
-                    isFilled: true,
-                    onChanged: (query) => setState(() {
-                      filteredBanks = filterBanks(query);
-                    }),
-                  ),
-                  customSpaceVertical(16),
-                  Expanded(
-                    child: SizedBox(
-                      height: MediaQuery.of(context).size.height / 2,
-                      child: filteredBanks.isEmpty
-                          ? Center(
-                              child: customText(
-                                textValue: '${searchController.text} not found',
-                                textStyle: subHeadline5,
-                              ),
-                            )
-                          : ListView.separated(
-                              scrollDirection: Axis.vertical,
-                              separatorBuilder: (context, index) =>
-                                  customSpaceVertical(16),
-                              itemCount: filteredBanks.length,
-                              itemBuilder: (context, index) => InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    if (tempBank.isNotEmpty) tempBank.clear();
-                                    bankNameController.text =
-                                        filteredBanks[index]['name']!;
-                                    tempBank.add({
-                                      'id': filteredBanks[index]['id']!,
-                                      'name': filteredBanks[index]['name']!,
-                                      'number': filteredBanks[index]['number']!,
-                                      'image': filteredBanks[index]['image']!,
-                                    });
-                                  });
-                                  Navigator.pop(context);
-                                },
-                                child: ListTile(
-                                  leading: ClipRRect(
-                                    borderRadius: BorderRadius.circular(40),
-                                    child: CachedNetworkImage(
-                                      width: 44,
-                                      height: 44,
-                                      fit: BoxFit.cover,
-                                      imageUrl: filteredBanks[index]['image']!,
-                                      placeholder: (context, url) =>
-                                          Image.asset(
-                                        'lib/assets/images/profile.jpg',
-                                        fit: BoxFit.cover,
-                                      ),
-                                      errorWidget: (context, url, error) =>
-                                          const Icon(Icons.error),
-                                    ),
-                                  ),
-                                  title: customText(
-                                    textValue: filteredBanks[index]['name']!,
-                                    textStyle: headline5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  List<Map<String, dynamic>> filterAccounts(String query) {
-    return balances.where((account) {
-      final accountName = account['name'].toString().toLowerCase();
-      return accountName.contains(query.toLowerCase());
-    }).toList();
-  }
-
-  List<Map<String, dynamic>> filterBanks(String query) {
-    return banks.where((bank) {
-      final bankName = bank['name'].toString().toLowerCase();
-      return bankName.contains(query.toLowerCase());
-    }).toList();
   }
 }
