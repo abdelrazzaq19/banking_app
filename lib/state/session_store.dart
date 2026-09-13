@@ -2,9 +2,27 @@ import 'package:flutter/foundation.dart';
 import 'package:newtronic_banking/data/local/local_store.dart';
 import 'package:newtronic_banking/data/model/user_model.dart';
 import 'package:newtronic_banking/data/repository/repository.dart';
+import 'package:newtronic_banking/data/utils/identity_rules.dart';
 
 /// Why a registration was refused.
 enum RegistrationFailure { emailTaken, usernameTaken }
+
+/// Why a profile edit was refused.
+enum ProfileUpdateFailure {
+  notSignedIn,
+  invalidName,
+  invalidEmail,
+  emailTaken,
+  notSaved;
+
+  String get message => switch (this) {
+        notSignedIn => 'Sign in before changing your details.',
+        invalidName => 'That name cannot be used.',
+        invalidEmail => 'That email address does not look right.',
+        emailTaken => 'Another account already uses that email address.',
+        notSaved => 'Your details could not be saved.',
+      };
+}
 
 /// The outcome of [SessionStore.register].
 class RegistrationResult {
@@ -110,6 +128,44 @@ class SessionStore extends ChangeNotifier {
     _userId = userId;
     await _store.writeDocument(StoreKeys.session, {_userIdField: userId});
     notifyListeners();
+  }
+
+  /// Changes the signed-in user's name, email, or both.
+  ///
+  /// Validates before writing rather than trusting the screen: the same rules
+  /// gate sign-up, and a value that could not be registered should not be
+  /// reachable by editing either. Returns null on success, or why not.
+  ///
+  /// An unchanged email is not a collision — the check ignores this user's own
+  /// record — so saving a name without touching the email works.
+  Future<ProfileUpdateFailure?> updateProfile({
+    String? name,
+    String? email,
+  }) async {
+    final user = currentUser;
+    if (user == null) return ProfileUpdateFailure.notSignedIn;
+
+    final nextName = name?.trim() ?? user.name;
+    final nextEmail = email?.trim() ?? user.email;
+
+    if (validateFullName(nextName) != null) {
+      return ProfileUpdateFailure.invalidName;
+    }
+    if (validateEmail(nextEmail) != null) {
+      return ProfileUpdateFailure.invalidEmail;
+    }
+    if (_repository.isIdentityTakenByOther(nextEmail,
+        excludingUserId: user.id)) {
+      return ProfileUpdateFailure.emailTaken;
+    }
+
+    final saved = await _repository.updateUser(
+      user.copyWith(name: nextName, email: nextEmail),
+    );
+    if (!saved) return ProfileUpdateFailure.notSaved;
+
+    notifyListeners();
+    return null;
   }
 
   /// Sets the signed-in user's picture, or clears it when [image] is empty.

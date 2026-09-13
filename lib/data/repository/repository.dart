@@ -92,6 +92,15 @@ class Repository {
   /// Whether an email or username is already taken.
   bool isIdentityTaken(String identity) => findUserByIdentity(identity) != null;
 
+  /// Whether [identity] belongs to somebody other than [excludingUserId].
+  ///
+  /// Editing a profile has to ignore the editor's own record, or saving an
+  /// email unchanged would collide with itself and be refused.
+  bool isIdentityTakenByOther(String identity, {required int excludingUserId}) {
+    final owner = findUserByIdentity(identity);
+    return owner != null && owner.id != excludingUserId;
+  }
+
   /// Appends a new user, assigning the next free id.
   ///
   /// Returns null when the email or username is already in use, so the caller

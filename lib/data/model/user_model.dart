@@ -82,11 +82,19 @@ class Users {
     return email.toLowerCase() == needle || username.toLowerCase() == needle;
   }
 
-  Users copyWith({String? name, String? image, String? passwordHash}) => Users(
+  /// [username] is deliberately not copyable: it is how an account is found at
+  /// sign-in, and changing it would strand anyone who signs in by username.
+  Users copyWith({
+    String? name,
+    String? email,
+    String? image,
+    String? passwordHash,
+  }) =>
+      Users(
         id: id,
         name: name ?? this.name,
         username: username,
-        email: email,
+        email: email ?? this.email,
         passwordHash: passwordHash ?? this.passwordHash,
         image: image ?? this.image,
       );

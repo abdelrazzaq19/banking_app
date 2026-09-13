@@ -4,6 +4,7 @@ import 'package:newtronic_banking/core/theme/motion.dart';
 import 'package:newtronic_banking/core/theme/tokens.dart';
 import 'package:newtronic_banking/state/session_store.dart';
 import 'package:provider/provider.dart';
+import 'package:newtronic_banking/data/utils/identity_rules.dart';
 import 'package:newtronic_banking/data/utils/password_strength.dart';
 import 'package:newtronic_banking/presentation/screen/auth/auth_field_spec.dart';
 import 'package:newtronic_banking/presentation/screen/main/home_screen.dart';
@@ -549,38 +550,14 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
     };
   }
 
-  String _validateFullName(String value) {
-    final withoutSpaces = value.replaceAll(' ', '');
-    if (withoutSpaces.isEmpty) return 'Full Name is required';
-    if (withoutSpaces.length < 3 || withoutSpaces.length > 50) {
-      return 'Full Name must be 3 to 50 characters';
-    }
-    if (withoutSpaces.contains(RegExp(r'[0-9]')) ||
-        withoutSpaces.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) {
-      return 'Full Name must be text only';
-    }
-    return '';
-  }
+  // The three identity rules live in `identity_rules.dart` so the profile
+  // screen, which now edits the same fields, cannot disagree with sign-up.
+  // The empty string is what this screen's field spec means by "no error".
+  String _validateFullName(String value) => validateFullName(value) ?? '';
 
-  String _validateUsername(String value) {
-    if (value.isEmpty) return 'Username is required';
-    // Previously `length < 6 && length > 12`, which no string can satisfy, so
-    // the length rule never fired.
-    if (value.length < 6 || value.length > 12) {
-      return 'Username must be 6 to 12 characters';
-    }
-    if (value.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) {
-      return 'Username must be alphanumeric only';
-    }
-    return '';
-  }
+  String _validateUsername(String value) => validateUsername(value) ?? '';
 
-  String _validateEmail(String value) {
-    if (value.isEmpty) return 'Email is required';
-    final emailPattern = RegExp(r'^[\w.+-]+@[\w-]+\.[\w.-]+$');
-    if (!emailPattern.hasMatch(value)) return 'Check your format email';
-    return '';
-  }
+  String _validateEmail(String value) => validateEmail(value) ?? '';
 
   /// On sign-up, defers to the shared requirement list so the strength meter
   /// and the error message can never disagree. On log-in there is nothing to
