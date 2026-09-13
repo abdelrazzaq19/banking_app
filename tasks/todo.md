@@ -271,10 +271,71 @@ Commits and pushes are the user's job. Leave the working tree clean but uncommit
 
 ## Phase 5 — Ship
 
-- [ ] **Task 16 — Polish, tests, docs** (M) — depends on 12, 13, 14, 15
-  - [ ] Loading, empty and error states on every async surface
-  - [ ] Usable at 200% text scale with no overflow; WCAG AA contrast in both themes
-  - [ ] `README.md` with setup, architecture, features and screenshots
-  - [ ] Widget tests per screen; unit tests for money, analytics, scheduling, QR
+- [x] **Task 16 — Polish, tests, docs** (M) — depends on 12, 13, 14, 15
+  - [x] Loading, empty and error states on every async surface
+  - [x] Usable at 200% text scale with no overflow, checked by a test rather
+        than by eye
+  - [x] WCAG AA contrast in both themes, measured by a test
+  - [x] `README.md` with setup, architecture, features and the known gaps
+  - [x] Widget tests for every screen; unit tests for money, analytics,
+        scheduling and QR payloads. 353 tests.
+  - [ ] **Screenshots not included in the README**, for the reason recorded at
+        Checkpoint B — they need `flutter run -d chrome` on the user's machine.
+  - [ ] **Launcher icons not regenerated.** The only square source in the repo
+        is `newtronic.png` at 70x70. Generating from it would upscale to
+        512x512 and ship blurrier icons than the Flutter defaults already
+        there. This needs a source of at least 1024x1024; the config is left
+        as it was rather than made worse.
 
-- [ ] **✅ Checkpoint E — Done.** All acceptance criteria met. Working tree left uncommitted for the user to commit and push.
+  What the accessibility work actually found — all of it real, none of it
+  visible without the tests:
+
+  - **Five screens overflowed at 200% text.** The balance card carried a fixed
+    236px carousel height and a fixed 200px detail height, neither of which
+    grew with the text; `context.scaledHeight` now scales them, capped so a
+    card cannot push everything else off the screen. The history and home
+    activity rows put an unconstrained amount-and-date column beside the payee
+    name, which ran 101px past the row edge — the column is now flexible, and
+    the amount wraps rather than ellipsizing, because half a figure is worse
+    than a figure on two lines.
+  - **Four contrast failures.** `success` measured 3.51:1 while carrying text,
+    `accent` 4.27:1, and two chart series sat under 3:1 on white — yellow at
+    2.17:1. The field outline was the divider grey at 1.35:1, which is the
+    boundary WCAG asks 3:1 of, so `outline` became a real border tone and
+    input decoration was pointed at it; `mutedBorder` stays light for dividers,
+    which are decorative and exempt.
+  - Darkening the aqua chart series to clear 3:1 dropped it to 5.5 deltaE from
+    the orange under protanopia. Moving it round to teal restored 11.1 while
+    keeping enough chroma not to read as grey. Both palettes were re-run
+    through the palette validator and pass every check.
+
+  Three more controls that did nothing, found while auditing the states:
+
+  - The **transfer form's Favorites tab** was a fixed "No favourites yet" panel
+    that said the same thing whether the user had none or twenty. Favourites
+    became real in Task 13 and this second entry point was never connected; it
+    now lists them and fills the form in place when one is tapped.
+  - **Home's recent activity rows** had `onTap: () {}` — an ink ripple and
+    nothing else, which reads as the app having failed to respond. They now
+    open the receipt, and rows that never had one are not tappable at all.
+  - **"Forgot Password?"** was an empty callback. There is nothing to reset: a
+    password here is only ever a hash in this device's storage, with no server
+    holding an account and no address to send a link to. It now says that, and
+    offers the one thing that does work.
+
+  Also fixed: the transfer form had no handler for a failed bank-list read, so
+  a corrupt bundle left the pickers empty with no explanation.
+
+- [x] **✅ Checkpoint E — Done.**
+  - [x] `flutter analyze` → No issues found
+  - [x] `flutter test` → 353 passing
+  - [x] `flutter build web --release` and `flutter build windows --release`
+        both succeed
+  - [x] Working tree left uncommitted, for the user to commit and push
+  - [ ] **Visual review still outstanding.** Carried from Checkpoint B: the
+        in-app browser mis-renders Flutter's canvas and an off-screen capture
+        of the Windows build comes back black, because a background process
+        cannot take foreground focus. Every layout claim above rests on the
+        automated overflow and contrast checks, not on anyone having looked at
+        the app. `flutter run -d chrome` on your own machine is the missing
+        step.
