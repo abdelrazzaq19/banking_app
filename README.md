@@ -4,7 +4,7 @@ A Flutter banking app: real balances, real transfers, spending analytics,
 scheduled payments, QR payment codes and exportable receipts — all persisted
 locally, running on web, Windows, Android, iOS, macOS and Linux.
 
-Around 12,000 lines of Dart across 75 files, with 371 tests.
+Around 12,000 lines of Dart across 75 files, with 390 tests.
 
 ---
 
@@ -62,6 +62,11 @@ shows exactly what it decoded before anything is sent.
 **Receipts.** Any transfer exports as a PDF (composed as text, so it stays
 selectable and searchable) or as a PNG of the on-screen card. Past transfers
 can be re-opened from history and exported again.
+
+**Editable profile.** Name and email can be changed from the profile screen,
+against the same rules that gate sign-up. Username is shown but not editable —
+it is how an account is found at sign-in. An email another account already uses
+is refused.
 
 **Profile picture.** Pick one from your files; it is cropped square, scaled to
 256px and stored with the user record, so it survives a restart on web as well
@@ -123,6 +128,12 @@ multi-megabyte base64 string into `shared_preferences`, which is read whole on
 launch. Files past 12MB are refused rather than decoded, because the resize runs
 on the UI isolate and the web has no isolate to move it to.
 
+**Name, username and email rules live in one file.** They used to be private
+methods on the sign-up screen. Once the profile could edit the same fields, two
+copies would have been free to drift, and a name the profile accepted but
+sign-up rejected is the kind of disagreement nobody notices until a user cannot
+recreate their own account.
+
 **Payment codes are real EMVCo tag-length-value** — the shape QRIS uses,
 CRC-16 trailer included — rather than a private format. Fields are sliced as
 bytes because EMVCo lengths count bytes, so a non-Latin payee name does not
@@ -143,7 +154,7 @@ flutter analyze
 flutter test
 ```
 
-371 tests. Beyond the per-screen widget tests, three suites are worth calling
+390 tests. Beyond the per-screen widget tests, three suites are worth calling
 out because they check things that are easy to get wrong by eye:
 
 - **`contrast_test.dart`** measures every foreground/background pair in both
