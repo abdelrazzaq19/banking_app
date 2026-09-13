@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:lottie/lottie.dart';
 import 'package:newtronic_banking/core/theme/app_colors.dart';
-import 'package:newtronic_banking/core/theme/motion.dart';
 import 'package:newtronic_banking/core/theme/tokens.dart';
 import 'package:newtronic_banking/styles/typography.dart';
+
+// Legacy layout and input helpers.
+//
+// These predate the widget kit in `app_widgets.dart` and remain only while the
+// screens are moved over one at a time. New code should use `AppButton`,
+// `AppTextField` and friends; nothing new should be added here.
 
 SizedBox customSpaceHorizontal(double width) => SizedBox(width: width);
 
@@ -26,6 +30,7 @@ Text customText({
   );
 }
 
+/// Superseded by [AppButton].
 InkWell customButton({
   required VoidCallback? buttonOnTap,
   required String buttonText,
@@ -79,10 +84,7 @@ InkWell customButton({
   );
 }
 
-/// A text field styled from the active theme.
-///
-/// [context] is required because the colours come from the theme rather than a
-/// fixed palette, which is what lets the field render correctly in dark mode.
+/// Superseded by [AppTextField].
 TextField customTextField(
   BuildContext context, {
   required TextEditingController controller,
@@ -146,189 +148,4 @@ TextField customTextField(
       ),
     ),
   );
-}
-
-Future<void> customDialog(
-  BuildContext context, {
-  required String animationIcon,
-  required String textDialog,
-}) {
-  return showDialog<void>(
-    barrierDismissible: false,
-    context: context,
-    builder: (context) => Dialog(
-      backgroundColor: context.scheme.surface,
-      shape: RoundedRectangleBorder(borderRadius: Radii.mdAll),
-      child: Padding(
-        padding: const EdgeInsets.all(Insets.xxl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            LottieBuilder.asset(
-              animationIcon,
-              height: 140,
-              width: 140,
-              fit: BoxFit.cover,
-            ),
-            customSpaceVertical(Insets.xs),
-            customText(
-              textValue: textDialog,
-              textStyle: headline4.copyWith(color: context.scheme.onSurface),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-void showLoadingDialog(BuildContext context) {
-  customDialog(
-    context,
-    animationIcon: 'lib/assets/lotties/lottieLoading.json',
-    textDialog: 'Please wait...',
-  );
-}
-
-/// Shows the success animation, then runs [onAction] once it has been seen.
-///
-/// The dialog is dismissed before [onAction] runs, so the caller never navigates
-/// on top of a dialog route that is still on the stack.
-void showSuccessDialog(
-  BuildContext context, {
-  required String message,
-  required VoidCallback onAction,
-}) {
-  customDialog(
-    context,
-    animationIcon: 'lib/assets/lotties/lottieSuccess.json',
-    textDialog: message,
-  );
-  Future.delayed(const Duration(seconds: 2), () {
-    if (!context.mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
-    onAction();
-  });
-}
-
-void showErrorDialog(BuildContext context, {required String message}) {
-  customDialog(
-    context,
-    animationIcon: 'lib/assets/lotties/lottieFailed.json',
-    textDialog: message,
-  );
-  Future.delayed(const Duration(seconds: 2), () {
-    if (!context.mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
-  });
-}
-
-Future<void> customDialogWithButton(
-  BuildContext context, {
-  required String dialogTextValue,
-  required VoidCallback dialogAction,
-}) {
-  return showDialog<void>(
-    barrierDismissible: false,
-    context: context,
-    builder: (dialogContext) {
-      final scheme = dialogContext.scheme;
-      final colors = dialogContext.colors;
-      return Dialog(
-        backgroundColor: scheme.surface,
-        shape: RoundedRectangleBorder(borderRadius: Radii.mdAll),
-        child: Container(
-          width: MediaQuery.of(dialogContext).size.width * 0.65,
-          padding: const EdgeInsets.all(Insets.xl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              LottieBuilder.asset(
-                'lib/assets/lotties/lottieAsk.json',
-                height: 80,
-                width: 80,
-                fit: BoxFit.cover,
-              ),
-              customSpaceVertical(Insets.md),
-              customText(
-                textValue: dialogTextValue,
-                textStyle: headline4.copyWith(color: scheme.onSurface),
-                textAlign: TextAlign.center,
-              ),
-              customSpaceVertical(Insets.md),
-              Column(
-                children: List.generate(
-                  2,
-                  (buttonIndex) {
-                    final isConfirm = buttonIndex == 0;
-                    return Container(
-                      margin: const EdgeInsets.symmetric(
-                        vertical: Insets.xxs,
-                      ),
-                      child: customButton(
-                        buttonOnTap: () {
-                          if (isConfirm) {
-                            dialogAction();
-                          } else {
-                            Navigator.pop(dialogContext);
-                          }
-                        },
-                        buttonBorderRadius: Radii.xsAll,
-                        buttonText: isConfirm ? 'Yes' : 'No',
-                        buttonFirstGradientColor:
-                            isConfirm ? scheme.primary : colors.mutedFill,
-                        buttonSecondGradientColor:
-                            isConfirm ? colors.accent : colors.mutedFill,
-                        textColor: isConfirm
-                            ? scheme.onPrimary
-                            : scheme.onSurface,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-/// Fades and lifts [child] into place, offset by its position in a list.
-///
-/// Used for the staggered reveals on the home and transaction screens.
-class Reveal extends StatelessWidget {
-  const Reveal({
-    super.key,
-    required this.child,
-    this.index = 0,
-    this.offset = 16,
-  });
-
-  final Widget child;
-
-  /// Position in the group; each step delays the animation by [Motion.stagger].
-  final int index;
-
-  /// How far the child travels upward as it fades in.
-  final double offset;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: Motion.medium + Motion.stagger * index,
-      curve: Motion.enter,
-      builder: (context, value, child) => Opacity(
-        opacity: value.clamp(0, 1),
-        child: Transform.translate(
-          offset: Offset(0, (1 - value) * offset),
-          child: child,
-        ),
-      ),
-      child: child,
-    );
-  }
 }

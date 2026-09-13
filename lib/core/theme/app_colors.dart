@@ -29,8 +29,10 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.subtleText,
     required this.accent,
     required this.success,
+    required this.warning,
     required this.glassTint,
     required this.glassBorder,
+    required this.chartPalette,
   });
 
   /// The brand-coloured band behind the home sheet.
@@ -63,11 +65,24 @@ class AppColors extends ThemeExtension<AppColors> {
   /// Positive amounts and confirmations.
   final Color success;
 
+  /// Caution without failure: a middling password, a budget nearly spent.
+  final Color warning;
+
   /// Translucent tint layer of a frosted surface.
   final Color glassTint;
 
   /// Hairline highlight along the edge of a frosted surface.
   final Color glassBorder;
+
+  /// Categorical series colours, assigned in fixed order and never cycled.
+  ///
+  /// Validated with the data-viz palette checker against this theme's own chart
+  /// surface: lightness band, chroma floor, colour-vision separation and
+  /// normal-vision separation all pass in both modes. In light mode three of
+  /// the seven sit below 3:1 against white, which the checker flags as needing
+  /// relief — the category breakdown ships a labelled, ranked list beside the
+  /// bar, so identity never rests on colour alone.
+  final List<Color> chartPalette;
 
   // The header and card blues are deeper than the raw brand light tone: white
   // on Brand.light measures 1.94:1, well under the 4.5:1 AA needs, so card
@@ -82,10 +97,32 @@ class AppColors extends ThemeExtension<AppColors> {
     mutedFill: Color(0xFFF1F4F8),
     mutedBorder: Color(0xFFD8DEE7),
     subtleText: Color(0xFF5B6472),
-    accent: Color(0xFF1F7AE0),
-    success: Color(0xFF0F9D58),
+    // Deepened from 4.27:1 — a near miss, but this tone carries the ghost
+    // button's label, which is text like any other.
+    accent: Color(0xFF1A6FD0),
+    // Darker than a stock material green: the original measured 3.51:1 on
+    // white, and this colour carries text — "enough balance", a completed
+    // transfer — not just a dot.
+    success: Color(0xFF0B8049),
+    warning: Color(0xFFB25E02),
     glassTint: Color(0x33FFFFFF),
     glassBorder: Color(0x66FFFFFF),
+    chartPalette: [
+      Color(0xFF2A78D6), // blue
+      Color(0xFFEB6834), // orange
+      // Teal rather than the original aqua green. Darkening the green to
+      // clear 3:1 dropped it to 5.5 deltaE from the orange under
+      // protanopia; moving it round to teal restores 11.1 while keeping
+      // enough chroma not to read as grey.
+      Color(0xFF00918A), // teal
+      // Yellow is the hard one on a white ground: the bright tone measured
+      // 2.17:1. Taken down to an amber that clears 3:1 and still reads as
+      // the warm slot between orange and magenta.
+      Color(0xFFB57400), // yellow
+      Color(0xFFD45E8B), // magenta, deepened from 2.69:1 to clear 3:1
+      Color(0xFF008300), // green
+      Color(0xFF4A3AA7), // violet
+    ],
   );
 
   static const AppColors dark = AppColors(
@@ -99,8 +136,20 @@ class AppColors extends ThemeExtension<AppColors> {
     subtleText: Color(0xFF9AA6B8),
     accent: Brand.light,
     success: Color(0xFF4CAF7D),
+    warning: Color(0xFFE0A44A),
     glassTint: Color(0x1FFFFFFF),
     glassBorder: Color(0x3DFFFFFF),
+    // The same seven hues, re-stepped for the dark surface — not an automatic
+    // flip of the light values.
+    chartPalette: [
+      Color(0xFF3987E5),
+      Color(0xFFD95926),
+      Color(0xFF199E70),
+      Color(0xFFC98500),
+      Color(0xFFD55181),
+      Color(0xFF008300),
+      Color(0xFF9085E9),
+    ],
   );
 
   @override
@@ -115,8 +164,10 @@ class AppColors extends ThemeExtension<AppColors> {
     Color? subtleText,
     Color? accent,
     Color? success,
+    Color? warning,
     Color? glassTint,
     Color? glassBorder,
+    List<Color>? chartPalette,
   }) {
     return AppColors(
       headerBackground: headerBackground ?? this.headerBackground,
@@ -129,8 +180,10 @@ class AppColors extends ThemeExtension<AppColors> {
       subtleText: subtleText ?? this.subtleText,
       accent: accent ?? this.accent,
       success: success ?? this.success,
+      warning: warning ?? this.warning,
       glassTint: glassTint ?? this.glassTint,
       glassBorder: glassBorder ?? this.glassBorder,
+      chartPalette: chartPalette ?? this.chartPalette,
     );
   }
 
@@ -152,8 +205,13 @@ class AppColors extends ThemeExtension<AppColors> {
       subtleText: Color.lerp(subtleText, other.subtleText, t)!,
       accent: Color.lerp(accent, other.accent, t)!,
       success: Color.lerp(success, other.success, t)!,
+      warning: Color.lerp(warning, other.warning, t)!,
       glassTint: Color.lerp(glassTint, other.glassTint, t)!,
       glassBorder: Color.lerp(glassBorder, other.glassBorder, t)!,
+      chartPalette: [
+        for (var i = 0; i < chartPalette.length; i++)
+          Color.lerp(chartPalette[i], other.chartPalette[i], t)!,
+      ],
     );
   }
 }
@@ -164,4 +222,13 @@ extension AppThemeContext on BuildContext {
   TextTheme get texts => Theme.of(this).textTheme;
   AppColors get colors => Theme.of(this).extension<AppColors>() ?? AppColors.light;
   bool get isDark => Theme.of(this).brightness == Brightness.dark;
+}
+
+/// Picks a series colour by fixed position.
+///
+/// Wrapping is a last resort, not a design: past the palette's length the
+/// callers should be folding into "Other" instead.
+extension ChartPalette on AppColors {
+  Color seriesColor(int index) =>
+      chartPalette[index % chartPalette.length];
 }

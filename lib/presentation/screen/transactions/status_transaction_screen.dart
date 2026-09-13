@@ -1,227 +1,177 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:newtronic_banking/data/model/transfer_receipt.dart';
-import 'package:newtronic_banking/data/utils/formatted.dart';
-import 'package:newtronic_banking/presentation/screen/main/home_screen.dart';
-import 'package:newtronic_banking/presentation/widget/components.dart';
+import 'package:lottie/lottie.dart';
 import 'package:newtronic_banking/core/theme/app_colors.dart';
+import 'package:newtronic_banking/core/theme/motion.dart';
 import 'package:newtronic_banking/core/theme/tokens.dart';
-import 'package:newtronic_banking/styles/typography.dart';
+import 'package:newtronic_banking/data/model/transfer_receipt.dart';
+import 'package:newtronic_banking/presentation/screen/main/home_screen.dart';
+import 'package:newtronic_banking/presentation/screen/transactions/widgets/receipt_card.dart';
+import 'package:newtronic_banking/presentation/screen/transactions/widgets/receipt_export_actions.dart';
+import 'package:newtronic_banking/presentation/widget/app_widgets.dart';
+import 'package:newtronic_banking/state/favourite_store.dart';
+import 'package:provider/provider.dart';
 
-class StatusTransactionScreen extends StatelessWidget {
+/// Where a completed transfer lands.
+///
+/// Deliberately a dead end for the back gesture: the transfer has happened, so
+/// returning to the form would invite a duplicate. Both actions lead home.
+class StatusTransactionScreen extends StatefulWidget {
   const StatusTransactionScreen({super.key, required this.receipt});
   static const routeName = '/status-transaction';
 
   final TransferReceipt receipt;
 
   @override
+  State<StatusTransactionScreen> createState() =>
+      _StatusTransactionScreenState();
+}
+
+class _StatusTransactionScreenState extends State<StatusTransactionScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _successController = AnimationController(
+    vsync: this,
+    duration: Motion.slow,
+  );
+
+  /// Wraps the card so the image export captures exactly what is on screen.
+  final GlobalKey _captureKey = GlobalKey();
+
+
+  @override
+  void initState() {
+    super.initState();
+    _successController.forward();
+  }
+
+  @override
+  void dispose() {
+    _successController.dispose();
+    super.dispose();
+  }
+
+  /// Returns to the account that actually made the transfer. This used to push
+  /// `HomeScreen` with a hardcoded `arguments: 5`, silently switching users.
+  void _goHome() => Navigator.pushNamedAndRemoveUntil(
+        context,
+        HomeScreen.routeName,
+        (route) => false,
+        arguments: widget.receipt.userId,
+      );
+
+  Future<void> _saveAsFavourite() async {
+    await context.read<FavouriteStore>().saveReceipt(widget.receipt);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${widget.receipt.recipientName} saved to favourites'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final colors = context.colors;
+
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: context.colors.headerBackground,
+        backgroundColor: colors.headerBackground,
         body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Flexible(
-                  child: SvgPicture.asset(
-                    'lib/assets/images/success.svg',
-                    height: 160,
+          child: Column(
+            children: [
+              _buildSuccessMark(context),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: Radii.sheetTop,
+                    color: colors.sheetBackground,
+                  ),
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: ListView(
+                          padding: const EdgeInsets.all(Insets.lg),
+                          children: staggeredReveal([
+                            RepaintBoundary(
+                              key: _captureKey,
+                              child: ReceiptCard(receipt: widget.receipt),
+                            ),
+                            const SizedBox(height: Insets.md),
+                            ReceiptExportActions(
+                              receipt: widget.receipt,
+                              captureKey: _captureKey,
+                            ),
+                          ]),
+                        ),
+                      ),
+                      _buildActions(context),
+                    ],
                   ),
                 ),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: _buildReceiptCard(context),
-                  ),
-                ),
-                _buildActions(context),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Container _buildReceiptCard(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: context.scheme.surface,
-        borderRadius: Radii.mdAll,
+  Widget _buildSuccessMark(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+      child: SizedBox(
+        height: 132,
+        child: Lottie.asset(
+          'lib/assets/lotties/lottieSuccess.json',
+          controller: _successController,
+          fit: BoxFit.contain,
+          // Play once and hold on the final frame: a success mark that loops
+          // keeps drawing the eye back after the news has landed.
+          onLoaded: (composition) {
+            _successController
+              ..duration = composition.duration
+              ..forward();
+          },
+        ),
       ),
-      padding: const EdgeInsets.all(24),
+    );
+  }
+
+  Widget _buildActions(BuildContext context) {
+    // Read from the store rather than a local flag, so the button reflects
+    // what is actually saved — including a recipient saved on an earlier
+    // transfer.
+    final isSaved = context.watch<FavouriteStore>().containsReceipt(
+          widget.receipt,
+        );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Insets.lg,
+        Insets.xs,
+        Insets.lg,
+        Insets.md,
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.start,
         children: [
-          customText(
-            textValue: 'Transaction Nominal',
-            textStyle: headline4.copyWith(color: context.colors.subtleText),
+          AppButton(
+            label: isSaved ? 'Saved to favourites' : 'Save as Favorite',
+            icon: isSaved ? Icons.star_rounded : Icons.star_border_rounded,
+            variant: AppButtonVariant.secondary,
+            // Disabled once saved, so the state of the action is visible
+            // rather than the same button quietly doing nothing twice.
+            onPressed: isSaved ? null : _saveAsFavourite,
           ),
-          customSpaceVertical(4),
-          customText(
-            textValue: formatRupiahWithSymbol(receipt.nominal),
-            textStyle: numeric(headline3).copyWith(
-              color: context.scheme.onSurface,
-            ),
-          ),
-          customSpaceVertical(16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(80),
-                child: CachedNetworkImage(
-                  imageUrl: receipt.bankImage,
-                  width: 40,
-                  height: 40,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Image.asset(
-                    'lib/assets/images/profile.jpg',
-                    fit: BoxFit.cover,
-                  ),
-                  errorWidget: (context, url, error) => const Icon(Icons.error),
-                ),
-              ),
-              customSpaceHorizontal(8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: [
-                    customText(
-                      textValue: receipt.recipientName,
-                      textStyle: subHeadline4.copyWith(
-                        color: context.scheme.onSurface,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    customText(
-                      textValue: '${receipt.bankName} - '
-                          '${maskedBankNumber(receipt.accountNumber)}',
-                      textStyle: bodyText2.copyWith(
-                        color: context.colors.subtleText,
-                      ),
-                      maxLines: 2,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          _divider(),
-          _detailRow(context, 'Transaction Type', receipt.transactionType),
-          _divider(),
-          _detailRow(context, 'Ref Number', receipt.reference),
-          _divider(),
-          _detailRow(context, 'Date', formattedTransactionDate(receipt.createdAt)),
-          if (receipt.note != null) ...[
-            _divider(),
-            _detailRow(context, 'Note', receipt.note!),
-          ],
-          customSpaceVertical(10),
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            title: customText(
-              textValue: 'Detail',
-              textStyle: subHeadline5.copyWith(color: context.scheme.onSurface),
-            ),
-            children: [
-              _detailRow(context, 'Source Account', receipt.sourceAccountName),
-              _divider(),
-              _detailRow(context, 'Transaction Nominal',
-                  formatRupiahWithSymbol(receipt.nominal)),
-              _divider(),
-              _detailRow(context, 'Admin', formatRupiahWithSymbol(receipt.adminFee)),
-              _divider(),
-              _detailRow(
-                context,
-                'Total',
-                formatRupiahWithSymbol(receipt.total),
-                emphasise: true,
-              ),
-            ],
+          const SizedBox(height: Insets.xs),
+          AppButton(
+            label: 'Done',
+            onPressed: _goHome,
           ),
         ],
       ),
     );
   }
-
-  Widget _divider() => const Padding(
-        padding: EdgeInsets.symmetric(vertical: Insets.xs),
-        child: Divider(height: 1),
-      );
-
-  Row _detailRow(
-    BuildContext context,
-    String label,
-    String value, {
-    bool emphasise = false,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        customText(
-          textValue: label,
-          textStyle: (emphasise ? subHeadline5 : bodyText2).copyWith(
-            color: context.colors.subtleText,
-          ),
-        ),
-        customSpaceHorizontal(16),
-        Flexible(
-          child: customText(
-            textValue: value,
-            textStyle: numeric(subHeadline5).copyWith(
-              color: context.scheme.onSurface,
-            ),
-            textAlign: TextAlign.end,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Column _buildActions(BuildContext context) {
-    return Column(
-      children: [
-        customButton(
-          buttonOnTap: () => showSuccessDialog(
-            context,
-            message: 'Success Saving Transaction',
-            onAction: () => _goHome(context),
-          ),
-          buttonText: 'Save as Favorite',
-          textColor: context.scheme.primary,
-          buttonFirstGradientColor: context.scheme.surface,
-          buttonSecondGradientColor: context.scheme.surface,
-        ),
-        customSpaceVertical(8),
-        customButton(
-          buttonOnTap: () => _goHome(context),
-          buttonText: 'Done',
-          textColor: context.scheme.onPrimary,
-          buttonFirstGradientColor: context.scheme.primary,
-          buttonSecondGradientColor: context.colors.accent,
-        ),
-      ],
-    );
-  }
-
-  /// Returns to the account that actually made the transfer. This used to push
-  /// `HomeScreen` with a hardcoded `arguments: 5`, silently switching users.
-  void _goHome(BuildContext context) => Navigator.pushNamedAndRemoveUntil(
-        context,
-        HomeScreen.routeName,
-        (route) => false,
-        arguments: receipt.userId,
-      );
 }

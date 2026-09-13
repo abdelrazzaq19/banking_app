@@ -1,0 +1,200 @@
+
+import 'package:flutter/foundation.dart';
+import 'package:newtronic_banking/data/model/transfer_receipt.dart';
+import 'package:newtronic_banking/data/utils/formatted.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+
+/// One label/value line of the receipt document.
+///
+/// [isTotal] marks the final debited figure, which is set larger and bold so
+/// the number that actually left the account is the one the eye lands on.
+typedef ReceiptRow = ({String label, String value, bool isTotal});
+
+/// Turns a receipt into something the user can keep or send on.
+///
+/// The PDF is composed rather than screenshotted: a page of selectable,
+/// searchable text survives being forwarded and printed, where a picture of a
+/// phone screen does not. The PNG is a capture of the on-screen card, so what
+/// gets shared is exactly what was looked at.
+abstract final class ReceiptExporter {
+  /// Filename stem, derived from the reference so two receipts never collide.
+  static String fileStem(TransferReceipt receipt) =>
+      'receipt-${receipt.reference.replaceAll(' ', '')}';
+
+  // ------------------------------------------------------------------- PDF
+
+  /// Every line the document states, in the order it states them.
+  ///
+  /// Kept separate from [buildPdf] because it is the part worth asserting:
+  /// once the rows are right, laying them out is the pdf package's job. The
+  /// alternative — searching the saved bytes for a substring — does not work,
+  /// since the writer splits strings across kerned `TJ` runs, so a name can
+  /// end up as `[(Siti) -20 (Rahayu)]` and never match as written.
+  static List<ReceiptRow> documentRows(TransferReceipt receipt) => [
+        (label: 'Recipient', value: receipt.recipientName, isTotal: false),
+        (label: 'Bank', value: receipt.bankName, isTotal: false),
+        (
+          label: 'Account number',
+          value: maskedBankNumber(receipt.accountNumber),
+          isTotal: false,
+        ),
+        (label: 'From', value: receipt.sourceAccountName, isTotal: false),
+        (
+          label: 'Transaction type',
+          value: receipt.transactionType,
+          isTotal: false,
+        ),
+        (label: 'Reference', value: receipt.reference, isTotal: false),
+        (
+          label: 'Date',
+          value: formattedTransactionDate(receipt.createdAt),
+          isTotal: false,
+        ),
+        if (receipt.note case final String note)
+          (label: 'Note', value: note, isTotal: false),
+      ];
+
+  /// The money breakdown, kept apart from [documentRows] by the divider.
+  static List<ReceiptRow> amountRows(TransferReceipt receipt) => [
+        (
+          label: 'Transfer amount',
+          value: receipt.nominal.formattedWithSymbol,
+          isTotal: false,
+        ),
+        (
+          label: 'Admin fee',
+          value: receipt.adminFee.formattedWithSymbol,
+          isTotal: false,
+        ),
+        (
+          label: 'Total debited',
+          value: receipt.total.formattedWithSymbol,
+          isTotal: true,
+        ),
+      ];
+
+  /// Builds the receipt document.
+  ///
+  /// [compress] is only turned off by tests, which use the size difference to
+  /// prove compression is actually being applied.
+  static Future<Uint8List> buildPdf(
+    TransferReceipt receipt, {
+    bool compress = true,
+  }) async {
+    final document = pw.Document(
+      title: 'Transfer receipt ${receipt.reference}',
+      author: 'Newtronic Banking',
+      compress: compress,
+      theme: await _theme(),
+    );
+
+    document.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(36),
+        build: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(
+              'Newtronic Banking',
+              style: pw.TextStyle(
+                fontSize: 18,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColor.fromInt(0xFF00336F),
+              ),
+            ),
+            pw.SizedBox(height: 2),
+            pw.Text(
+              'Transfer receipt',
+              style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700),
+            ),
+            pw.SizedBox(height: 24),
+
+            pw.Text(
+              receipt.nominal.formattedWithSymbol,
+              style: pw.TextStyle(fontSize: 28, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 2),
+            pw.Text(
+              'sent to ${receipt.recipientName}',
+              style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700),
+            ),
+            pw.SizedBox(height: 24),
+            pw.Divider(color: PdfColors.grey300),
+
+            ...documentRows(receipt).map(_row),
+
+            pw.Divider(color: PdfColors.grey300),
+            ...amountRows(receipt).map(_row),
+
+            pw.Spacer(),
+            pw.Text(
+              'Generated by Newtronic Banking. This receipt is a record of a '
+              'completed transfer.',
+              style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return document.save();
+  }
+
+  /// The document's fonts, with Helvetica as the fallback.
+  ///
+  /// The pdf package's built-in Helvetica is Latin-1 only, so a recipient whose
+  /// name carries an accent or a non-Latin script would be written to the
+  /// receipt wrong — unacceptable on a record of where someone's money went.
+  /// Inter covers them, at the cost of a one-time download.
+  ///
+  /// If that download fails — offline, or a blocked network — the receipt is
+  /// still produced in Helvetica rather than not at all. A slightly wrong
+  /// glyph beats no proof of transfer.
+  static Future<pw.ThemeData?> _theme() async {
+    if (_cachedTheme != null) return _cachedTheme;
+
+    try {
+      final regular = await PdfGoogleFonts.interRegular();
+      final bold = await PdfGoogleFonts.interSemiBold();
+      return _cachedTheme = pw.ThemeData.withFont(base: regular, bold: bold);
+    } catch (error) {
+      debugPrint('ReceiptExporter: falling back to Helvetica — $error');
+      return null;
+    }
+  }
+
+  static pw.ThemeData? _cachedTheme;
+
+  static pw.Widget _row(ReceiptRow row) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 5),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Expanded(
+            child: pw.Text(
+              row.label,
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+            ),
+          ),
+          pw.SizedBox(width: 16),
+          pw.Expanded(
+            child: pw.Text(
+              row.value,
+              textAlign: pw.TextAlign.right,
+              style: pw.TextStyle(
+                fontSize: row.isTotal ? 12 : 10,
+                fontWeight:
+                    row.isTotal ? pw.FontWeight.bold : pw.FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+}

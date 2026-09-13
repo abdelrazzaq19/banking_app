@@ -24,7 +24,10 @@ abstract final class AppTheme {
           onSurface: const Color(0xFF10151D),
           onSurfaceVariant: const Color(0xFF5B6472),
           surfaceContainerHighest: const Color(0xFFF1F4F8),
-          outline: const Color(0xFFD8DEE7),
+          // A real border tone, not the divider grey. This one outlines
+          // text fields, where WCAG treats the boundary as what identifies
+          // the control and asks for 3:1; the old value measured 1.35:1.
+          outline: const Color(0xFF7E8A9B),
           outlineVariant: const Color(0xFFE6EBF1),
         ),
         appColors: AppColors.light,
@@ -45,7 +48,7 @@ abstract final class AppTheme {
           onSurface: const Color(0xFFE7ECF3),
           onSurfaceVariant: const Color(0xFF9AA6B8),
           surfaceContainerHighest: const Color(0xFF1B2331),
-          outline: const Color(0xFF2E3A4C),
+          outline: const Color(0xFF5E6E85),
           outlineVariant: const Color(0xFF232C3A),
         ),
         appColors: AppColors.dark,
@@ -127,13 +130,17 @@ abstract final class AppTheme {
           horizontal: Insets.md,
           vertical: Insets.sm,
         ),
+        // `outline`, not the divider grey: a field's edge is the only thing
+        // saying where the field is, so it has to be visible. Dividers keep
+        // the lighter `mutedBorder` — a hairline between rows is decorative
+        // and WCAG does not hold it to a ratio.
         border: OutlineInputBorder(
           borderRadius: Radii.pillAll,
-          borderSide: BorderSide(color: appColors.mutedBorder),
+          borderSide: BorderSide(color: colorScheme.outline),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: Radii.pillAll,
-          borderSide: BorderSide(color: appColors.mutedBorder),
+          borderSide: BorderSide(color: colorScheme.outline),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: Radii.pillAll,

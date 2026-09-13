@@ -1,21 +1,47 @@
-import 'dart:async';
-
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:lottie/lottie.dart';
 import 'package:newtronic_banking/common/constants.dart';
+import 'package:newtronic_banking/core/theme/app_colors.dart';
+import 'package:newtronic_banking/core/theme/tokens.dart';
+import 'package:newtronic_banking/data/model/balance_model.dart';
 import 'package:newtronic_banking/data/model/transaction_model.dart';
 import 'package:newtronic_banking/data/model/user_model.dart';
 import 'package:newtronic_banking/data/repository/repository.dart';
+import 'package:newtronic_banking/data/model/favourite_transfer.dart';
+import 'package:newtronic_banking/presentation/screen/transactions/transfer_args.dart';
+import 'package:newtronic_banking/state/account_store.dart';
+import 'package:newtronic_banking/state/favourite_store.dart';
+import 'package:newtronic_banking/state/schedule_store.dart';
+import 'package:newtronic_banking/state/transfer_service.dart';
+import 'package:newtronic_banking/state/transaction_store.dart';
+import 'package:provider/provider.dart';
 import 'package:newtronic_banking/data/utils/formatted.dart';
 import 'package:newtronic_banking/data/utils/greetings.dart';
+import 'package:newtronic_banking/presentation/screen/main/account_detail_screen.dart';
+import 'package:newtronic_banking/presentation/screen/main/profile_screen.dart';
+import 'package:newtronic_banking/presentation/screen/main/tracker_tab.dart';
+import 'package:newtronic_banking/presentation/screen/main/widgets/balance_card.dart';
+import 'package:newtronic_banking/presentation/screen/qr/qr_actions.dart';
+import 'package:newtronic_banking/presentation/screen/transactions/receipt_detail_screen.dart';
+import 'package:newtronic_banking/presentation/screen/transactions/add_transaction_screen.dart';
 import 'package:newtronic_banking/presentation/screen/transactions/transaction_screen.dart';
-import 'package:newtronic_banking/core/theme/app_colors.dart';
-import 'package:newtronic_banking/core/theme/tokens.dart';
-import 'package:newtronic_banking/presentation/widget/components.dart';
+import 'package:newtronic_banking/presentation/widget/app_widgets.dart';
 import 'package:newtronic_banking/presentation/widget/shimmer.dart';
-import 'package:newtronic_banking/presentation/widget/theme_toggle_button.dart';
-import 'package:newtronic_banking/styles/typography.dart';
+
+/// Everything the home tab needs, loaded once instead of by three competing
+/// `FutureBuilder`s that each re-fetched on every rebuild.
+class _HomeData {
+  const _HomeData({
+    required this.user,
+    required this.balances,
+    required this.activity,
+    required this.people,
+  });
+
+  final Users? user;
+  final List<Balances> balances;
+  final List<Transactions> activity;
+  final List<Users> people;
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.id});
@@ -27,73 +53,143 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  /// Height of the balance card carousel. Fixed rather than a fraction of the
-  /// screen so the card contents cannot overflow on a short device.
-  static const double _cardCarouselHeight = 248;
+  /// Tall enough for the card's contents at their largest text scale. Fixed
+  /// rather than a fraction of the screen, which overflowed on short devices.
+  static const double _carouselHeight = 236;
 
-  final List<Map<String, String>> transactions = [];
+  /// Leaves the neighbouring cards peeking, so the carousel reads as a stack
+  /// you can swipe rather than a single static card.
+  static const double _carouselViewport = 0.82;
 
-  late TabController tabController;
-  late TabController contentController;
-  Timer? _shimmerTimer;
-  bool isShimmer = true;
+  late final TabController tabController = TabController(
+    length: homeScreenTabbar.length,
+    vsync: this,
+    initialIndex: 1,
+  );
+  late final TabController accountTypeController = TabController(
+    length: homeScreenContentTabbar.length,
+    vsync: this,
+  );
+  late final PageController cardController =
+      PageController(viewportFraction: _carouselViewport);
 
-  void initTabController() {
-    tabController = TabController(
-      length: homeScreenTabbar.length,
-      vsync: this,
-      initialIndex: 1,
-    );
-    contentController = TabController(
-      length: homeScreenContentTabbar.length,
-      vsync: this,
-    );
-  }
+  late Future<_HomeData> _data;
 
-  Future<void> getTransaction() async {
-    final users = await Repository().getUsers();
-    if (!mounted) return;
-    setState(() {
-      transactions
-        ..clear()
-        ..add({'name': 'Transaction', 'image': ''})
-        ..addAll(users.map((user) => {
-              'name': user.name,
-              'image': user.image,
-            }));
-    });
-  }
+  /// The most recent successful load, kept so a refresh can leave the current
+  /// content on screen instead of blanking it back to skeletons.
+  _HomeData? _lastData;
 
   @override
   void initState() {
     super.initState();
-    _shimmerTimer = Timer(const Duration(seconds: 2), () {
-      if (!mounted) return;
-      setState(() => isShimmer = false);
-    });
-    initTabController();
-    getTransaction();
+    accountTypeController.addListener(_onAccountTypeChanged);
+    _data = _load();
+    // Scheduled transfers have no background scheduler behind them; the app
+    // opening is when due ones are found and applied.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runDueSchedules());
+  }
+
+  /// Applies any scheduled transfers that have fallen due, and reports what
+  /// happened.
+  ///
+  /// Silence would be the wrong outcome either way: money moving without a
+  /// word is alarming, and a transfer that could not be sent needs saying.
+  Future<void> _runDueSchedules() async {
+    final schedules = context.read<ScheduleStore>();
+    final transfers = context.read<TransferService>();
+    if (!schedules.isLoaded) await schedules.load();
+    if (!mounted) return;
+
+    final report = await schedules.runDue(
+      now: DateTime.now(),
+      transfers: transfers,
+      userId: widget.id,
+    );
+    if (!mounted || report.isEmpty) return;
+
+    setState(() => _data = _load());
+    final summary = report.summary;
+    if (summary == null) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(summary),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor:
+            report.failed.isEmpty ? null : context.scheme.errorContainer,
+      ),
+    );
+  }
+
+  void _onAccountTypeChanged() {
+    if (accountTypeController.indexIsChanging) return;
+    setState(() {});
   }
 
   @override
   void dispose() {
-    _shimmerTimer?.cancel();
+    accountTypeController.removeListener(_onAccountTypeChanged);
     tabController.dispose();
-    contentController.dispose();
+    accountTypeController.dispose();
+    cardController.dispose();
     super.dispose();
   }
 
+  Future<_HomeData> _load() async {
+    final repository = context.read<Repository>();
+    final accounts = context.read<AccountStore>();
+    final transactions = context.read<TransactionStore>();
+
+    // The stores load once at startup; this only forces a read when the screen
+    // is reached before that finished, or after a refresh cleared them.
+    if (!accounts.isLoaded) await accounts.load();
+    if (!transactions.isLoaded) await transactions.load();
+
+    final data = _HomeData(
+      user: repository.findUser(widget.id),
+      balances: accounts.accounts,
+      activity: transactions.transactions,
+      people: repository.readUsers(),
+    );
+    _lastData = data;
+    return data;
+  }
+
+  /// Re-reads the data behind the screen from the local store.
+  Future<void> _refresh() async {
+    await context.read<AccountStore>().load();
+    if (!mounted) return;
+    await context.read<TransactionStore>().load();
+    if (!mounted) return;
+
+    final refreshed = _load();
+    // A block body, not an arrow: `setState(() => _data = refreshed)` returns
+    // the assigned Future, and the framework asserts that setState callbacks
+    // return nothing.
+    setState(() {
+      _data = refreshed;
+    });
+    await refreshed;
+  }
+
+  String get _accountLabel =>
+      homeScreenContentTabbar[accountTypeController.index] == 'Card'
+          ? 'Card'
+          : 'Account';
+
   @override
   Widget build(BuildContext context) {
+    final colors = context.colors;
+
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: context.colors.headerBackground,
+        backgroundColor: colors.headerBackground,
         body: SafeArea(
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.only(top: 16),
+                padding: const EdgeInsets.only(top: Insets.md),
                 child: _buildTabBar(),
               ),
               Expanded(
@@ -101,41 +197,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   width: double.infinity,
                   decoration: BoxDecoration(
                     borderRadius: Radii.sheetTop,
-                    color: context.colors.sheetBackground,
+                    color: colors.sheetBackground,
                   ),
-                  padding: const EdgeInsets.only(top: 24),
+                  clipBehavior: Clip.antiAlias,
                   child: TabBarView(
                     controller: tabController,
                     physics: const NeverScrollableScrollPhysics(),
-                    children: List.generate(
-                      homeScreenTabbar.length,
-                      (index) {
-                        if (index != 1) return _buildComingSoon(context);
-                        return FutureBuilder<Users?>(
-                          future: Repository().getUserById(id: widget.id),
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData || isShimmer) {
-                              return _buildShimmer();
-                            }
-                            return SingleChildScrollView(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildHeader(snapshot.data!),
-                                  _buildContentTabBar(),
-                                  _buildContentTabBarView(context),
-                                  _customTitle(title: 'Favorite Transactions'),
-                                  _customContentTransaction(),
-                                  _customTitle(title: 'Recent Activities'),
-                                  customRecentActivities(),
-                                  customSpaceVertical(24),
-                                ],
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
+                    children: [
+                      const TrackerTab(),
+                      _buildHomeTab(context),
+                      const EmptyState(
+                        animationAsset:
+                            'lib/assets/lotties/lottieComingSoon.json',
+                        title: 'Portfolio is on the way',
+                        message:
+                            'Savings goals and investments will live here.',
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -146,365 +224,339 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Center _buildComingSoon(BuildContext context) {
-    return Center(
-      child: LottieBuilder.asset(
-        'lib/assets/lotties/lottieComingSoon.json',
-        width: MediaQuery.of(context).size.width * .5,
-        height: MediaQuery.of(context).size.height * .5,
-      ),
-    );
-  }
-
-  Widget _buildShimmer() {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          shimmerHeader(context),
-          shimmerCard(context),
-          _customTitle(title: 'Favorite Transactions'),
-          shimmerClip(context),
-          _customTitle(title: 'Recent Activities'),
-          shimmerTile(context),
-        ],
-      ),
-    );
-  }
-
-  FutureBuilder<List<Transactions>> customRecentActivities() {
-    return FutureBuilder<List<Transactions>>(
-      future: Repository().getTransactions(),
+  Widget _buildHomeTab(BuildContext context) {
+    return FutureBuilder<_HomeData>(
+      future: _data,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final data = snapshot.data!;
-        final itemCount = data.length > 3 ? 3 : data.length;
-        return ListView.separated(
-          physics: const NeverScrollableScrollPhysics(),
-          scrollDirection: Axis.vertical,
-          separatorBuilder: (context, index) => customSpaceVertical(8),
-          shrinkWrap: true,
-          itemCount: itemCount,
-          itemBuilder: (context, listIndex) {
-            final activity = data[listIndex];
-            // Material, not a coloured Container: a DecoratedBox between a
-            // ListTile and its nearest Material hides the tile's ink splashes,
-            // and the framework asserts on that arrangement.
-            return Container(
-              margin: const EdgeInsets.symmetric(horizontal: 20),
-              child: Material(
-                color: context.colors.cardGradient[1],
-                borderRadius: Radii.mdAll,
-                child: ListTile(
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: CachedNetworkImage(
-                      width: 44,
-                      height: 44,
-                      fit: BoxFit.cover,
-                      imageUrl: activity.image,
-                      placeholder: (context, url) =>
-                          customText(textValue: _initialOf(activity.name)),
-                      errorWidget: (context, url, error) =>
-                          const Icon(Icons.error),
-                    ),
-                  ),
-                  title: customText(
-                    textValue: activity.name,
-                    textStyle: subHeadline4.copyWith(color: context.colors.onCard),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: customText(
-                    textValue: formattedTransactionDate(activity.date),
-                    textStyle: bodyText2.copyWith(
-                      color: context.colors.onCard,
-                    ),
-                  ),
-                  trailing: customText(
-                    textValue: '- Rp ${activity.priceIdr}',
-                    textStyle: numeric(bodyText2).copyWith(
-                      color: context.colors.onCard,
-                    ),
-                  ),
-                ),
-              ),
+        // Falling back to the last good load is what keeps a pull-to-refresh
+        // from wiping the screen while the new data is in flight.
+        // Accounts and activity come from the watched stores, not the snapshot,
+        // so a transfer made elsewhere is reflected here without a reload.
+        final accounts = context.watch<AccountStore>();
+        final transactions = context.watch<TransactionStore>();
+        final data = snapshot.data ?? _lastData;
+
+        if (data == null) {
+          if (snapshot.hasError) {
+            return EmptyState(
+              icon: Icons.cloud_off_rounded,
+              title: 'Could not load your accounts',
+              message: 'Check your connection and try again.',
+              actionLabel: 'Retry',
+              onActionPressed: _refresh,
             );
-          },
+          }
+          return _buildShimmer();
+        }
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          edgeOffset: Insets.lg,
+          color: context.scheme.primary,
+          child: ListView(
+            padding: const EdgeInsets.only(top: Insets.lg, bottom: Insets.xxl),
+            // Always scrollable so the pull gesture works even when the content
+            // is shorter than the viewport.
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: staggeredReveal([
+              _buildGreeting(context, data.user),
+              const SizedBox(height: Insets.md),
+              _buildAccountTypeTabs(),
+              _buildCarousel(context, accounts.accounts),
+              const SectionHeader(title: 'Favorite Transactions'),
+              _buildFavorites(context),
+              const SectionHeader(title: 'Recent Activities'),
+              _buildActivity(context, transactions.recent()),
+            ]),
+          ),
         );
       },
     );
   }
 
-  /// First character of [name], or a placeholder when the name is empty.
-  ///
-  /// `name.split('')[0]` used to throw a `RangeError` on an empty name.
-  String _initialOf(String name) => name.isEmpty ? '?' : name[0];
+  Widget _buildShimmer() {
+    return ListView(
+      padding: const EdgeInsets.only(top: Insets.lg),
+      children: [
+        shimmerHeader(context),
+        shimmerCard(context),
+        const SectionHeader(title: 'Favorite Transactions'),
+        shimmerClip(context),
+        const SectionHeader(title: 'Recent Activities'),
+        shimmerTile(context),
+      ],
+    );
+  }
 
-  SizedBox _customContentTransaction() {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        scrollDirection: Axis.horizontal,
-        separatorBuilder: (context, index) => customSpaceHorizontal(8),
-        itemCount: transactions.length,
-        itemBuilder: (context, transactionIndex) {
-          final data = transactions[transactionIndex];
-          final isNewTransaction = transactionIndex == 0;
-          return InkWell(
-            onTap: () {
-              if (isNewTransaction) {
-                Navigator.pushNamed(
-                  context,
-                  TransactionScreen.routeName,
-                  arguments: widget.id,
-                );
-              }
-            },
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: context.colors.mutedBorder),
+  Widget _buildGreeting(BuildContext context, Users? user) {
+    final colors = context.colors;
+    final firstName = (user?.name ?? '').split(' ').first;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+      child: Row(
+        children: [
+          Semantics(
+            button: true,
+            label: 'Open profile',
+            child: InkWell(
+              onTap: () => Navigator.pushNamed(context, ProfileScreen.routeName),
+              borderRadius: Radii.pillAll,
+              child: ClipRRect(
                 borderRadius: Radii.pillAll,
-                color: isNewTransaction
-                    ? context.scheme.primary
-                    : context.colors.sheetBackground,
-              ),
-              padding: const EdgeInsets.only(right: 16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  if (isNewTransaction)
-                    const Padding(
-                      padding: EdgeInsets.only(left: Insets.md),
-                      child: Icon(Icons.add),
-                    )
-                  else
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(40),
-                      child: CachedNetworkImage(
-                        width: 44,
-                        height: 44,
-                        fit: BoxFit.cover,
-                        imageUrl: data['image'] ?? '',
-                        placeholder: (context, url) => Image.asset(
-                          'lib/assets/images/profile.jpg',
-                          fit: BoxFit.cover,
-                        ),
-                        errorWidget: (context, url, error) =>
-                            const Icon(Icons.error),
-                      ),
-                    ),
-                  customSpaceHorizontal(8),
-                  customText(
-                    textValue: data['name'] ?? '',
-                    textStyle: bodyText2.copyWith(
-                      color: isNewTransaction
-                          ? context.scheme.onPrimary
-                          : context.scheme.onSurface,
-                    ),
-                  ),
-                ],
+                child: RemoteImage(
+                  url: user?.image ?? '',
+                  size: 48,
+                  fallback: (context) => const ProfilePhotoFallback(size: 48),
+                ),
               ),
             ),
+          ),
+          const SizedBox(width: Insets.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  greetingsFunction(),
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: colors.subtleText),
+                ),
+                Text(
+                  firstName.isEmpty ? 'there' : firstName,
+                  style: Theme.of(context).textTheme.titleLarge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const ThemeToggleButton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountTypeTabs() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TabBar(
+        controller: accountTypeController,
+        indicatorSize: TabBarIndicatorSize.label,
+        indicatorPadding: const EdgeInsets.only(bottom: Insets.xs),
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        padding: const EdgeInsets.symmetric(horizontal: Insets.sm),
+        tabs: [
+          for (final label in homeScreenContentTabbar) Tab(text: label),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarousel(BuildContext context, List<Balances> balances) {
+    if (balances.isEmpty) {
+      return const EmptyState(
+        compact: true,
+        icon: Icons.credit_card_off_rounded,
+        title: 'No accounts yet',
+        message: 'Accounts you open will show up here.',
+      );
+    }
+
+    return Column(
+      children: [
+        SizedBox(
+          height: context.scaledHeight(_carouselHeight),
+          child: PageView.builder(
+            controller: cardController,
+            itemCount: balances.length,
+            padEnds: false,
+            itemBuilder: (context, index) {
+              final balance = balances[index];
+              return Padding(
+                padding: const EdgeInsets.only(
+                  left: Insets.lg,
+                  right: Insets.xs,
+                  bottom: Insets.xs,
+                ),
+                child: Hero(
+                  tag: balanceCardHeroTag(balance),
+                  flightShuttleBuilder: (_, _, _, _, _) => Material(
+                    color: Colors.transparent,
+                    child: BalanceCard(
+                      balance: balance,
+                      label: _accountLabel,
+                      showActions: false,
+                      animateBalance: false,
+                    ),
+                  ),
+                  child: BalanceCard(
+                    balance: balance,
+                    label: _accountLabel,
+                    onTap: () => _openAccount(balance),
+                    onMove: () => _openTransfer(),
+                    onQris: () =>
+                        showQrActions(context, initialAccount: balance),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: Insets.xs),
+        Center(
+          child: PageDots(controller: cardController, count: balances.length),
+        ),
+      ],
+    );
+  }
+
+  void _openAccount(Balances balance) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AccountDetailScreen(
+          balance: balance,
+          label: _accountLabel,
+          userId: widget.id,
+        ),
+      ),
+    );
+  }
+
+  /// Reopens a past transfer so it can be read again or shared.
+  ///
+  /// Only transfers the user made carry the details a receipt needs; the
+  /// seeded entries never had one, so those rows do not open.
+  void _openReceipt(Transactions transaction) {
+    final receipt = transaction.toReceipt(widget.id);
+    if (receipt == null) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReceiptDetailScreen(receipt: receipt),
+      ),
+    );
+  }
+
+  void _openTransfer({FavouriteTransfer? favourite}) => Navigator.pushNamed(
+        context,
+        AddTransactionScreen.routeName,
+        arguments: TransferArgs(
+          userId: widget.id,
+          prefill: favourite == null
+              ? null
+              : TransferPrefill.fromFavourite(favourite),
+        ),
+      );
+
+  Widget _buildFavorites(BuildContext context) {
+    final colors = context.colors;
+    final favourites = context.watch<FavouriteStore>().favourites;
+
+    return SizedBox(
+      height: context.scaledHeight(56),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+        scrollDirection: Axis.horizontal,
+        separatorBuilder: (_, _) => const SizedBox(width: Insets.xs),
+        itemCount: favourites.length + 1,
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return _FavoriteChip(
+              label: 'Transaction',
+              isPrimary: true,
+              leading: Icon(Icons.add_rounded, color: context.scheme.onPrimary),
+              onTap: () => Navigator.pushNamed(
+                context,
+                TransactionScreen.routeName,
+                arguments: widget.id,
+              ),
+            );
+          }
+
+          // Saved recipients, each one tap from a prefilled transfer.
+          final favourite = favourites[index - 1];
+          return _FavoriteChip(
+            label: favourite.recipientName,
+            leading: CircleAvatar(
+              radius: 18,
+              backgroundColor: colors.mutedFill,
+              child: Text(
+                _initialOf(favourite.recipientName),
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+            onTap: () => _openTransfer(favourite: favourite),
           );
         },
       ),
     );
   }
 
-  Padding _customTitle({required String title}) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 20, top: 24, bottom: 8),
-      child: customText(textValue: title, textStyle: subHeadline3),
-    );
-  }
+  Widget _buildActivity(BuildContext context, List<Transactions> activity) {
+    if (activity.isEmpty) {
+      return const EmptyState(
+        compact: true,
+        icon: Icons.receipt_long_rounded,
+        title: 'No activity yet',
+        message: 'Your recent transactions will appear here.',
+      );
+    }
 
-  SizedBox _buildContentTabBarView(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: _cardCarouselHeight,
-      child: TabBarView(
-        controller: contentController,
-        children: List.generate(
-          contentController.length,
-          (tabIndex) => FutureBuilder(
-            future: Repository().getBalances(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 4,
-                ),
-                separatorBuilder: (context, index) => customSpaceHorizontal(10),
-                scrollDirection: Axis.horizontal,
-                itemCount: snapshot.data!.length,
-                itemBuilder: (context, cardIndex) {
-                  final data = snapshot.data![cardIndex];
-                  final cardWidth =
-                      (MediaQuery.of(context).size.width * .6).clamp(240.0, 360.0);
-                  return Container(
-                    width: cardWidth,
-                    decoration: BoxDecoration(
-                      borderRadius: Radii.mdAll,
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: context.colors.cardGradient,
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            customText(
-                              textValue: tabIndex == 0
-                                  ? '${data.cardName} Account'
-                                  : '${data.cardName} Card',
-                              textStyle: headline4.copyWith(
-                                color: context.colors.onCard,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            customSpaceVertical(4),
-                            customText(
-                              textValue: data.cardNumber,
-                              textStyle:
-                                  subHeadline5.copyWith(color: context.colors.onCard),
-                            ),
-                          ],
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            customText(
-                              textValue: 'Balance',
-                              textStyle: bodyText1.copyWith(color: context.colors.onCard),
-                            ),
-                            customSpaceVertical(8),
-                            customText(
-                              textValue: 'Rp ${data.balance.trim()}',
-                              textStyle: headline4.copyWith(color: context.colors.onCard),
-                            ),
-                            customSpaceVertical(8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: List.generate(
-                                2,
-                                (index) => customButton(
-                                  buttonWidth: cardWidth * .42,
-                                  buttonOnTap: () {},
-                                  buttonText: index == 0 ? 'MOVE' : 'QRIS',
-                                  buttonFirstGradientColor:
-                                      context.colors.onCard,
-                                  buttonSecondGradientColor:
-                                      context.colors.onCard,
-                                  buttonPadding: const EdgeInsets.all(8),
-                                  buttonBorderRadius: BorderRadius.circular(8),
-                                  buttonLeftIcon: Icon(
-                                    index == 0
-                                        ? Icons.wallet_rounded
-                                        : Icons.qr_code_rounded,
-                                    // The card action sits on `onCard` (white)
-                                    // in both themes, so it takes the darkest
-                                    // gradient tone rather than `primary`,
-                                    // which in dark mode is a light blue that
-                                    // would leave ~1.9:1 against white.
-                                    color: context.colors.cardGradient.first,
-                                  ),
-                                  isButtonIcon: true,
-                                  textStyles: subHeadline5.copyWith(
-                                    color: context.colors.cardGradient.first,
-                                  ),
-                                ),
-                              ),
-                            )
-                          ],
-                        ),
-                        customText(
-                          textValue: 'Exp ${data.expiryDate}',
-                          textStyle: bodyText2.copyWith(color: context.colors.onCard),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  TabBar _buildContentTabBar() {
-    return TabBar(
-      controller: contentController,
-      indicatorPadding: const EdgeInsets.only(bottom: 8),
-      indicatorSize: TabBarIndicatorSize.label,
-      isScrollable: true,
-      labelColor: context.scheme.onSurface,
-      unselectedLabelColor: context.colors.subtleText,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      tabAlignment: TabAlignment.start,
-      onTap: (_) => setState(() {}),
-      tabs: List.generate(
-        homeScreenContentTabbar.length,
-        (index) => Tab(text: homeScreenContentTabbar[index]),
-      ),
-    );
-  }
-
-  Padding _buildHeader(Users user) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(40),
-            child: CachedNetworkImage(
-              width: 44,
-              height: 44,
-              fit: BoxFit.cover,
-              imageUrl: user.image,
-              placeholder: (context, url) => Image.asset(
-                'lib/assets/images/profile.jpg',
-                fit: BoxFit.cover,
-              ),
-              errorWidget: (context, url, error) => const Icon(Icons.error),
+    final visible = activity.take(4).toList();
+    return Column(
+      children: [
+        for (final item in visible)
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Insets.lg,
+              vertical: Insets.xxs,
+            ),
+            child: _ActivityTile(
+              transaction: item,
+              onOpen: () => _openReceipt(item),
             ),
           ),
-          Flexible(
-            child: Column(
+      ],
+    );
+  }
+
+  /// First character of [name], or a placeholder when the name is empty.
+  ///
+  /// `name.split('')[0]` used to throw a `RangeError` on an empty name.
+  static String _initialOf(String name) => name.isEmpty ? '?' : name[0];
+
+  Widget _buildTabBar() {
+    final colors = context.colors;
+
+    return TabBar(
+      controller: tabController,
+      padding: const EdgeInsets.only(
+        left: Insets.md,
+        right: Insets.md,
+        bottom: Insets.md,
+      ),
+      splashBorderRadius: Radii.pillAll,
+      indicator: BoxDecoration(
+        borderRadius: Radii.pillAll,
+        color: colors.sheetBackground,
+      ),
+      labelColor: context.scheme.primary,
+      unselectedLabelColor: colors.onHeader,
+      dividerColor: Colors.transparent,
+      tabs: [
+        for (final tab in homeScreenTabbar)
+          Tab(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: customText(
-                    textValue: greetingsFunction(),
-                    textStyle: subHeadline5,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: customText(
-                    textValue: user.name,
-                    textStyle: headline4,
+                Icon(tab['icon'] as IconData, size: 18),
+                const SizedBox(width: Insets.xxs),
+                Flexible(
+                  child: Text(
+                    tab['name'] as String,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -512,55 +564,133 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
-          Row(
+      ],
+    );
+  }
+}
+
+class _FavoriteChip extends StatelessWidget {
+  const _FavoriteChip({
+    required this.label,
+    required this.leading,
+    required this.onTap,
+    this.isPrimary = false,
+  });
+
+  final String label;
+  final Widget leading;
+  final VoidCallback onTap;
+  final bool isPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final scheme = context.scheme;
+
+    return Material(
+      color: isPrimary ? scheme.primary : colors.sheetBackground,
+      borderRadius: Radii.pillAll,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: Radii.pillAll,
+        child: Container(
+          padding: const EdgeInsets.only(
+            left: Insets.xs,
+            right: Insets.md,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: Radii.pillAll,
+            border: Border.all(
+              color: isPrimary ? Colors.transparent : colors.mutedBorder,
+            ),
+          ),
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const ThemeToggleButton(),
-              IconButton(
-                onPressed: () {},
-                tooltip: 'Notifications',
-                style: IconButton.styleFrom(
-                  backgroundColor: context.colors.mutedFill,
-                  shape: const CircleBorder(),
-                ),
-                icon: Icon(
-                  Icons.notifications_none_rounded,
-                  color: context.scheme.primary,
-                ),
+              SizedBox(width: 36, height: 36, child: Center(child: leading)),
+              const SizedBox(width: Insets.xs),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: isPrimary ? scheme.onPrimary : scheme.onSurface,
+                    ),
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
+}
 
-  TabBar _buildTabBar() {
-    return TabBar(
-      controller: tabController,
-      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
-      splashBorderRadius: BorderRadius.circular(40),
-      indicator: BoxDecoration(
-        borderRadius: Radii.pillAll,
-        color: context.colors.sheetBackground,
-      ),
-      labelColor: context.scheme.primary,
-      unselectedLabelColor: context.colors.onHeader,
-      tabs: List.generate(
-        homeScreenTabbar.length,
-        (index) => Tab(
+class _ActivityTile extends StatelessWidget {
+  const _ActivityTile({required this.transaction, required this.onOpen});
+
+  final Transactions transaction;
+
+  /// Opening the receipt behind this row. Null-tapped rows used to show an ink
+  /// ripple and do nothing, which reads as the app having failed to respond.
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final amount = transaction.amount;
+
+    return Material(
+      color: colors.mutedFill,
+      borderRadius: Radii.mdAll,
+      child: InkWell(
+        // Only a transfer the user made has a receipt behind it; the seeded
+        // entries open nothing, and a null handler means no ripple promising
+        // otherwise.
+        onTap: transaction.isTransfer ? onOpen : null,
+        borderRadius: Radii.mdAll,
+        child: Padding(
+          padding: const EdgeInsets.all(Insets.sm),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(homeScreenTabbar[index]['icon'] as IconData),
-              customSpaceHorizontal(4),
+              ClipRRect(
+                borderRadius: Radii.smAll,
+                child: RemoteImage(
+                  url: transaction.image,
+                  size: 40,
+                  fallback: (context) =>
+                      InitialFallback(name: transaction.name, size: 40),
+                ),
+              ),
+              const SizedBox(width: Insets.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      transaction.name,
+                      style: Theme.of(context).textTheme.titleSmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      formattedTransactionDate(transaction.date),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: colors.subtleText),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: Insets.xs),
+              // Flexible for the same reason as the history row: at a large
+              // text size the amount no longer fits beside the name, and it
+              // wraps rather than being cut in half.
               Flexible(
-                child: customText(
-                  textValue: homeScreenTabbar[index]['name'] as String,
-                  textStyle: subHeadline5,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: Text(
+                  '- ${amount.formattedWithSymbol}',
+                  textAlign: TextAlign.end,
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
             ],

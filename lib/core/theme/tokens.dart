@@ -59,3 +59,20 @@ abstract final class Alphas {
   static const double hairline = 0.20;
   static const double scrim = 0.50;
 }
+
+/// Fixed heights that have to grow when the user's text does.
+///
+/// A box sized in raw pixels clips its own text the moment someone turns the
+/// system font up. Anything whose height exists only to hold text should be
+/// measured through here instead of written as a bare number.
+extension ScaledMetrics on BuildContext {
+  /// [base] grown in step with the current text scale.
+  ///
+  /// Capped at [max] times the base: past roughly double, a card tall enough
+  /// to hold every line would push everything else off the screen, and the
+  /// content inside is already free to ellipsize.
+  double scaledHeight(double base, {double max = 2.2}) {
+    final scaled = MediaQuery.textScalerOf(this).scale(base);
+    return scaled > base * max ? base * max : scaled;
+  }
+}
