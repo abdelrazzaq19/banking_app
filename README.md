@@ -4,7 +4,7 @@ A Flutter banking app: real balances, real transfers, spending analytics,
 scheduled payments, QR payment codes and exportable receipts — all persisted
 locally, running on web, Windows, Android, iOS, macOS and Linux.
 
-Around 12,000 lines of Dart across 75 files, with 343 tests.
+Around 12,000 lines of Dart across 75 files, with 371 tests.
 
 ---
 
@@ -63,6 +63,11 @@ shows exactly what it decoded before anything is sent.
 selectable and searchable) or as a PNG of the on-screen card. Past transfers
 can be re-opened from history and exported again.
 
+**Profile picture.** Pick one from your files; it is cropped square, scaled to
+256px and stored with the user record, so it survives a restart on web as well
+as desktop. A path would have been meaningless on the web and fragile on
+desktop, where the file can move.
+
 **Light and dark.** Both themes are designed, not flipped. The choice persists.
 
 ---
@@ -111,6 +116,13 @@ on the device can still call the same code. Real protection needs a server that
 never ships the hash to the client. The iteration count is a deliberate
 compromise for the web build's UI isolate.
 
+**Profile pictures are stored inline, not as file paths.** A `data:` URI
+travels with the record. Every picture is centre-cropped and scaled down first:
+a phone photo is several megabytes, and storing one verbatim would put a
+multi-megabyte base64 string into `shared_preferences`, which is read whole on
+launch. Files past 12MB are refused rather than decoded, because the resize runs
+on the UI isolate and the web has no isolate to move it to.
+
 **Payment codes are real EMVCo tag-length-value** — the shape QRIS uses,
 CRC-16 trailer included — rather than a private format. Fields are sliced as
 bytes because EMVCo lengths count bytes, so a non-Latin payee name does not
@@ -131,7 +143,7 @@ flutter analyze
 flutter test
 ```
 
-343 tests. Beyond the per-screen widget tests, three suites are worth calling
+371 tests. Beyond the per-screen widget tests, three suites are worth calling
 out because they check things that are easy to get wrong by eye:
 
 - **`contrast_test.dart`** measures every foreground/background pair in both
@@ -150,6 +162,10 @@ out because they check things that are easy to get wrong by eye:
 - **Sharing is not covered by a test.** Export opens the platform share sheet,
   which a widget test cannot drive. The document's contents, the PNG capture
   and the offline font fallback are covered; the dialog appearing is not.
+- **The file chooser is not driven by a test.** Picking a profile picture opens
+  a platform dialog a widget test cannot operate, so the picker is injectable
+  and the tests supply bytes directly. Everything after the choice — the crop,
+  the scale, the refusals, the save, the reload — is covered.
 - **No camera scanning.** `mobile_scanner` has no Windows support. Codes are
   read by pasting them, which is also the fallback a camera would need for a
   code that is scratched or badly lit.

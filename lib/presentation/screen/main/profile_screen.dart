@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:newtronic_banking/core/theme/app_colors.dart';
 import 'package:newtronic_banking/core/theme/theme_controller.dart';
 import 'package:newtronic_banking/core/theme/tokens.dart';
+import 'package:newtronic_banking/data/media/image_source.dart';
+import 'package:newtronic_banking/presentation/screen/main/widgets/profile_avatar_editor.dart';
 import 'package:newtronic_banking/presentation/screen/auth/authentication_screen.dart';
 import 'package:newtronic_banking/presentation/widget/app_widgets.dart';
 import 'package:newtronic_banking/state/account_store.dart';
@@ -10,8 +12,12 @@ import 'package:provider/provider.dart';
 
 /// The signed-in user's details, and the way out of the app.
 class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({super.key, this.pickImage = pickImageFromFiles});
   static const routeName = '/profile';
+
+  /// How a new profile picture is chosen. Injectable so tests can supply
+  /// bytes without a platform file dialog.
+  final PickImageBytes pickImage;
 
   Future<void> _signOut(BuildContext context) async {
     final confirmed = await showConfirmDialog(
@@ -126,14 +132,15 @@ class ProfileScreen extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: Insets.lg),
       child: Column(
         children: [
-          ClipRRect(
-            borderRadius: Radii.pillAll,
-            child: RemoteImage(
-              url: image ?? '',
-              size: 84,
-              fallback: (context) => const ProfilePhotoFallback(size: 84),
-            ),
-          ),
+          // Only offered to someone signed in: there is no record to write a
+          // picture to otherwise.
+          if (image == null)
+            ClipRRect(
+              borderRadius: Radii.pillAll,
+              child: const ProfilePhotoFallback(size: 84),
+            )
+          else
+            ProfileAvatarEditor(image: image, pickImage: pickImage),
           const SizedBox(height: Insets.sm),
           Text(
             name ?? 'Guest',

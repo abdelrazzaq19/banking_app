@@ -25,6 +25,7 @@ dependencies:
   flutter_animate: ^4.5.2
   pdf: ^3.11.3
   printing: ^5.14.2
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:

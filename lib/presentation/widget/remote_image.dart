@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:newtronic_banking/data/media/profile_picture.dart';
 import 'package:newtronic_banking/core/theme/app_colors.dart';
 
 /// A square remote image with one fallback covering every case it can't show.
@@ -27,6 +28,21 @@ class RemoteImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (url.isEmpty) return fallback(context);
+
+    // A picture the user chose is carried inline as a data URI, not fetched.
+    // CachedNetworkImage cannot read one, so it never reaches the network path.
+    if (ProfilePicture.isStored(url)) {
+      final bytes = ProfilePicture.decode(url);
+      if (bytes == null) return fallback(context);
+
+      return Image.memory(
+        bytes,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (context, _, _) => fallback(context),
+      );
+    }
 
     return CachedNetworkImage(
       imageUrl: url,

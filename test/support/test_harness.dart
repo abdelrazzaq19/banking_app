@@ -175,3 +175,15 @@ Widget atTextScale(double scale, Widget child) => Builder(
         child: child,
       ),
     );
+
+/// Rebuilds a [SessionStore] over the same store, as a relaunch would.
+///
+/// Proves a change was written rather than only held in memory.
+Future<SessionStore> createReloadedSession(TestBackend backend) async {
+  final reloaded = SessionStore(
+    repository: backend.repository,
+    store: backend.store,
+  );
+  await reloaded.restore();
+  return reloaded;
+}

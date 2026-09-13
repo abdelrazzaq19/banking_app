@@ -112,6 +112,20 @@ class SessionStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sets the signed-in user's picture, or clears it when [image] is empty.
+  ///
+  /// Returns false when nobody is signed in or the record has gone, so the
+  /// caller can say nothing was saved rather than showing a picture that will
+  /// not be there after a restart.
+  Future<bool> setProfileImage(String image) async {
+    final user = currentUser;
+    if (user == null) return false;
+
+    final saved = await _repository.updateUser(user.copyWith(image: image));
+    if (saved) notifyListeners();
+    return saved;
+  }
+
   Future<void> signOut() async {
     _userId = null;
     await _store.remove(StoreKeys.session);

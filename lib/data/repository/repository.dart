@@ -126,6 +126,21 @@ class Repository {
     return created;
   }
 
+  /// Writes [updated] over the stored user with the same id.
+  ///
+  /// Returns false when no such user exists, so a caller cannot silently think
+  /// it saved something it did not.
+  Future<bool> updateUser(Users updated) async {
+    final existing = readUsers();
+    final index = existing.indexWhere((user) => user.id == updated.id);
+    if (index < 0) return false;
+
+    final next = [...existing];
+    next[index] = updated;
+    await writeUsers(next);
+    return true;
+  }
+
   List<Balances> readAccounts() => _store
       .readCollection(StoreKeys.accounts)
       .map(Balances.fromJson)
